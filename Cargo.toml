@@ -22,6 +22,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 web-time = "1.1"
 serde_json = "1"
 
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.29", default-features = false, features = ["wgpu"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.10"
 
