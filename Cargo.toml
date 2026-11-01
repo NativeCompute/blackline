@@ -10,6 +10,7 @@ homepage = "https://nativecompute.net"
 repository = "https://github.com/NativeCompute/blackline"
 
 [dependencies]
+ncf = { git = "https://github.com/NativeCompute/ncf", rev = "6001a14038fffa70788a934d988b53428e7fcdab" }
 eframe = { version = "0.29", default-features = false, features = [
     "glow",
     "default_fonts",
@@ -29,7 +30,7 @@ ureq = "2.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "wasmbind"] }
 
 [build-dependencies]
-winresource = "0.1"
+ncf-build = { git = "https://github.com/NativeCompute/ncf", rev = "6001a14038fffa70788a934d988b53428e7fcdab" }
 
 [profile.release]
 opt-level = 3
