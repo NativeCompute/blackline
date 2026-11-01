@@ -431,21 +431,19 @@ the dark and light casts are all exercised for real.
 | `src/app.rs` | Shell — ribbon, library, navigator, popovers, autosave, undo |
 | `src/app/home.rs` | Home: the script picker the app opens on |
 | `src/app/team.rs` `src/people.rs` | Screens for a shared library: read-only scripts, history, members, avatars. Not shown for a library on disk |
-| `src/update.rs` | The update check |
 | `src/app/voices.rs` | Choosing character colours: Random or Custom, the colour picker |
 | `src/keys.rs` `src/app/keyboard.rs` | Every shortcut and its default chords, the ones you choose instead, and Settings → Keyboard |
-| `src/theme.rs` `anim.rs` `ui.rs` `icons.rs` `alerts.rs` `chrome.rs` `splash.rs` | The design system: NativeCompute's tokens and controls |
-| `src/logo.rs` | The mark, the launcher icon and the Windows icon |
-| `src/caret.rs` | The only place that touches egui's text-cursor internals |
+| `src/theme.rs` | Blackline's own colours on top of NCF: element and character colours, the page font, the older palette names |
+| `src/ui.rs` `chrome.rs` `splash.rs` `logo.rs` | Blackline's name and mark handed to NCF's controls, title bar, splash and icons |
 
-Pinned to `eframe`/`egui` 0.29. If you move to a newer
-egui and the text cursor API has shifted, `src/caret.rs` is the only file that
-needs attention.
+The look, the controls, notices, icons, the update check and the text cursor
+come from [NCF](https://github.com/NativeCompute/ncf), the NativeCompute
+Framework, pinned in `Cargo.toml`. Blackline is pinned to `eframe`/`egui` 0.29
+through it.
 
-MIT licensed. Anybody, JetBrains Mono and Courier Prime are bundled under the
-SIL Open Font License; see `assets/fonts/`. Anybody is cut into static
-instances from its variable font, which the licence allows (it has no Reserved
-Font Name). printpdf 0.7.0 is vendored (MIT) with a
+MIT licensed. Courier Prime is bundled under the SIL Open Font License; see
+`assets/fonts/`. Anybody and JetBrains Mono come with NCF under the same
+licence. printpdf 0.7.0 is vendored (MIT) with a
 two-line fix so it also builds for WebAssembly; see
 `vendor/printpdf/VENDORED.md`.
 

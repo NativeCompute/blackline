@@ -5,17 +5,13 @@ mod teamtests;
 #[cfg(test)]
 mod uitests;
 
-pub mod alerts;
-pub mod anim;
 pub mod app;
 pub mod backend;
 pub mod cards;
-pub mod caret;
 pub mod chrome;
 pub mod editor;
 pub mod export;
 pub mod fountain;
-pub mod icons;
 pub mod keys;
 pub mod logo;
 pub mod model;
@@ -26,11 +22,25 @@ pub mod splash;
 pub mod storage;
 pub mod theme;
 pub mod ui;
-pub mod update;
 
 pub use eframe;
+pub use ncf::{alerts, anim, caret, icons, update};
 
-pub const NATIVECOMPUTE_URL: &str = "https://nativecompute.net";
+pub const MARK: ncf::mark::AppMark = ncf::mark::AppMark {
+    name: "Blackline",
+    parts: &[ncf::mark::slab((0.27, 0.83), (0.49, 0.17)), ncf::mark::line((0.585, 0.83), (0.805, 0.17))],
+};
+
+pub const INFO: ncf::AppInfo = ncf::AppInfo {
+    name: "Blackline",
+    id: "blackline",
+    version: env!("CARGO_PKG_VERSION"),
+    tagline: "Screenwriting in industry format",
+    repo: "NativeCompute/blackline",
+    mark: MARK,
+};
+
+pub const NATIVECOMPUTE_URL: &str = ncf::NATIVECOMPUTE_URL;
 pub const YOUTRACK_INFO_URL: &str = "https://www.jetbrains.com/youtrack/";
 
 pub const WEB: bool = cfg!(target_arch = "wasm32");

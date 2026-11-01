@@ -161,12 +161,13 @@ dependencies = [
  "chrono",
  "dirs",
  "eframe",
+ "ncf",
+ "ncf-build",
  "printpdf",
  "serde_json",
  "ureq",
  "web-time",
  "wgpu",
- "winresource",
 ]
 
 [[package]]
@@ -1514,6 +1515,26 @@ dependencies = [
  "termcolor",
  "thiserror 1.0.69",
  "unicode-xid",
+]
+
+[[package]]
+name = "ncf"
+version = "0.1.0"
+source = "git+https://github.com/NativeCompute/ncf?tag=v0.1.0#a34fe02bd7d84915ac7753d4d3d25a885e5816a8"
+dependencies = [
+ "dirs",
+ "eframe",
+ "serde_json",
+ "ureq",
+ "web-time",
+]
+
+[[package]]
+name = "ncf-build"
+version = "0.1.0"
+source = "git+https://github.com/NativeCompute/ncf?tag=v0.1.0#a34fe02bd7d84915ac7753d4d3d25a885e5816a8"
+dependencies = [
+ "winresource",
 ]
 
 [[package]]

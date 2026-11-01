@@ -1075,11 +1075,11 @@ fn the_update_check_compares_versions_and_reads_github() {
     assert!(!newer("2.1.0", "2.0.9"));
     assert!(!newer("2.0.0", "2.0.0-rc1"));
     let reply = r#"{"url":"https://api.github.com/x","html_url":"https://github.com/NativeCompute/blackline/releases/tag/v2.1.0","tag_name":"v2.1.0","author":{"html_url":"https://github.com/someone"}}"#;
-    let r = parse(reply).unwrap();
+    let r = parse(reply, crate::INFO.repo).unwrap();
     assert_eq!(r.version, "2.1.0");
     assert_eq!(r.url, "https://github.com/NativeCompute/blackline/releases/tag/v2.1.0");
-    assert!(parse("not json").is_none());
-    assert!(parse("{}").is_none());
+    assert!(parse("not json", crate::INFO.repo).is_none());
+    assert!(parse("{}", crate::INFO.repo).is_none());
     assert!(Settings::default().check_updates);
     assert!(!Settings::parse("check_updates = no\n").check_updates);
 }

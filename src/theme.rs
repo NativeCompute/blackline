@@ -1,11 +1,9 @@
 #![allow(dead_code)]
 
-use std::sync::RwLock;
-
 use crate::model::Element;
 
 use eframe::egui::{
-    self, Color32, FontData, FontDefinitions, FontFamily, Margin, Mesh, Pos2, Rect, Rounding,
+    self, Color32, FontData, FontFamily, Mesh, Pos2, Rect, Rounding,
     Shape, Stroke, Vec2,
 };
 
@@ -65,108 +63,75 @@ impl Palette {
     }
 }
 
+
+pub use ncf::theme::{
+    apply, bold, darken, display, fill_grad_poly, font, font_bold, font_display, font_hud, font_med, font_mono, font_semi,
+    grad_poly_shape, grad_rect, hover_surface, hsl, hud, lighten, medium, mix, on, rounded_poly, semibold, tint, top_edge,
+    tracked_text, tracked_width, wash, T_BODY, T_CAP, T_H, T_LABEL, T_MICRO, T_SM, T_TITLE,
+};
+
 pub fn palette(dark: bool) -> Palette {
-    let a = |base: u8, alpha: u8| Color32::from_rgba_unmultiplied(base, base, base, alpha);
-    if dark {
-        Palette {
-            dark,
-            backdrop: c(0x00, 0x00, 0x00),
-            glass: c(0x07, 0x08, 0x0D),
-            glass_hi: c(0x13, 0x16, 0x24),
-            glass_line: a(255, 31),
-            glass_edge: a(255, 66),
-            solid: c(0x07, 0x08, 0x0D),
-            solid_hi: c(0x0C, 0x0E, 0x16),
-            sunken: c(0x00, 0x00, 0x00),
-            raised: c(0x13, 0x16, 0x24),
-            line: a(255, 31),
-            line_strong: a(255, 66),
-            text: c(0xF2, 0xF3, 0xF7),
-            text_dim: c(0xA6, 0xAB, 0xC2),
-            text_faint: c(0x8A, 0x8F, 0xA8),
-            ink: c(0xFF, 0xFF, 0xFF),
-            primary: c(0x3B, 0x4C, 0xFF),
-            primary_light: c(0x6E, 0x7B, 0xFF),
-            primary_deep: c(0x2A, 0x36, 0xC8),
-            primary_quiet: Color32::from_rgba_unmultiplied(0x3B, 0x4C, 0xFF, 36),
-            primary_quiet_hi: Color32::from_rgba_unmultiplied(0x3B, 0x4C, 0xFF, 56),
-            prim_grad: (c(0x3B, 0x4C, 0xFF), c(0x3B, 0x4C, 0xFF)),
-            sec: c(0xC9, 0xCD, 0xDB),
-            sec_light: c(0xF2, 0xF3, 0xF7),
-            sec_deep: c(0x8A, 0x8F, 0xA8),
-            sec_grad: (c(0x8A, 0x8F, 0xA8), c(0xF2, 0xF3, 0xF7)),
-            danger: c(0xFF, 0x6B, 0x7A),
-            danger_light: c(0xFF, 0x9A, 0xA5),
-            warn: c(0xF5, 0xC4, 0x51),
-            ok: c(0x5E, 0xE0, 0xA0),
-            groups: [
-                c(0x6E, 0x7B, 0xFF),
-                c(0x5C, 0xC8, 0xFF),
-                c(0xA7, 0x8B, 0xFA),
-                c(0x5E, 0xE0, 0xA0),
-                c(0xF5, 0xC4, 0x51),
-                c(0xFF, 0x6B, 0x7A),
-            ],
-        }
-    } else {
-        Palette {
-            dark,
-            backdrop: c(0xF4, 0xF5, 0xF8),
-            glass: c(0xFF, 0xFF, 0xFF),
-            glass_hi: c(0xEC, 0xEE, 0xF4),
-            glass_line: a(0, 31),
-            glass_edge: a(0, 66),
-            solid: c(0xFF, 0xFF, 0xFF),
-            solid_hi: c(0xF6, 0xF7, 0xFA),
-            sunken: c(0xEC, 0xEE, 0xF4),
-            raised: c(0xE6, 0xE9, 0xF1),
-            line: a(0, 31),
-            line_strong: a(0, 66),
-            text: c(0x0B, 0x0C, 0x12),
-            text_dim: c(0x45, 0x4A, 0x5E),
-            text_faint: c(0x5F, 0x64, 0x7A),
-            ink: c(0xFF, 0xFF, 0xFF),
-            primary: c(0x3B, 0x4C, 0xFF),
-            primary_light: c(0x2B, 0x3A, 0xE0),
-            primary_deep: c(0x1F, 0x2A, 0xB0),
-            primary_quiet: Color32::from_rgba_unmultiplied(0x3B, 0x4C, 0xFF, 26),
-            primary_quiet_hi: Color32::from_rgba_unmultiplied(0x3B, 0x4C, 0xFF, 44),
-            prim_grad: (c(0x3B, 0x4C, 0xFF), c(0x3B, 0x4C, 0xFF)),
-            sec: c(0x2A, 0x2D, 0x3A),
-            sec_light: c(0x0B, 0x0C, 0x12),
-            sec_deep: c(0x5F, 0x64, 0x7A),
-            sec_grad: (c(0x05, 0x06, 0x0A), c(0x3A, 0x3E, 0x4E)),
-            danger: c(0xD1, 0x24, 0x3B),
-            danger_light: c(0xE5, 0x4B, 0x5E),
-            warn: c(0xB7, 0x7B, 0x00),
-            ok: c(0x14, 0x8A, 0x4F),
-            groups: [
-                c(0x3B, 0x4C, 0xFF),
-                c(0x00, 0x86, 0xC2),
-                c(0x7C, 0x4D, 0xE8),
-                c(0x14, 0x8A, 0x4F),
-                c(0xB7, 0x7B, 0x00),
-                c(0xD1, 0x24, 0x3B),
-            ],
-        }
+    let t = if dark { ncf::tokens::DARK } else { ncf::tokens::LIGHT };
+    Palette {
+        dark,
+        backdrop: t.void,
+        glass: t.deep,
+        glass_hi: if dark { t.panel_2 } else { t.sunken },
+        glass_line: t.line,
+        glass_edge: t.line_strong,
+        solid: t.deep,
+        solid_hi: t.panel,
+        sunken: t.sunken,
+        raised: t.panel_2,
+        line: t.line,
+        line_strong: t.line_strong,
+        text: t.text,
+        text_dim: t.text_2,
+        text_faint: t.text_3,
+        ink: t.ink,
+        primary: t.signal,
+        primary_light: t.signal_hi,
+        primary_deep: t.signal_deep,
+        primary_quiet: t.signal_soft,
+        primary_quiet_hi: t.signal_soft_hi,
+        prim_grad: (t.signal, t.signal),
+        sec: t.chrome,
+        sec_light: t.chrome_hi,
+        sec_deep: t.chrome_lo,
+        sec_grad: if dark { (t.chrome_lo, t.chrome_hi) } else { (t.chrome_shade, c(0x3A, 0x3E, 0x4E)) },
+        danger: t.danger,
+        danger_light: t.danger_hi,
+        warn: t.warn,
+        ok: t.ok,
+        groups: t.groups,
     }
 }
 
-static CURRENT: RwLock<Option<Palette>> = RwLock::new(None);
-
 pub fn pal() -> Palette {
-    if let Ok(g) = CURRENT.read() {
-        if let Some(p) = *g {
-            return p;
-        }
-    }
-    palette(true)
+    palette(ncf::theme::pal().dark)
 }
 
 pub fn set_palette(dark: bool) {
-    if let Ok(mut g) = CURRENT.write() {
-        *g = Some(palette(dark));
-    }
+    ncf::theme::set_palette(dark);
+}
+
+pub fn glass_surface(painter: &egui::Painter, rect: Rect, radius: f32, opacity: f32) {
+    let _ = opacity;
+    ncf::theme::panel_rounded(painter, rect, radius);
+}
+
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = ncf::theme::font_definitions();
+    fonts.font_data.insert("CourierPrime".to_string(), FontData::from_static(PAGE_REGULAR));
+    fonts.font_data.insert("CourierPrimeBold".to_string(), FontData::from_static(PAGE_BOLD));
+    let mono = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
+    let mut page_stack = vec!["CourierPrime".to_string()];
+    page_stack.extend(mono);
+    fonts.families.insert(page(), page_stack.clone());
+    let mut bold_stack = vec!["CourierPrimeBold".to_string()];
+    bold_stack.extend(page_stack);
+    fonts.families.insert(page_bold(), bold_stack);
+    ctx.set_fonts(fonts);
 }
 
 // metrics here---
@@ -187,134 +152,10 @@ pub const TOPBAR_H: f32 = 92.0;
 pub const DOC_MAX: f32 = 820.0;
 pub const GAP: f32 = 14.0;
 
-pub const T_TITLE: f32 = 26.0;
-pub const T_H: f32 = 17.0;
-pub const T_BODY: f32 = 14.5;
-pub const T_SM: f32 = 13.0;
-pub const T_LABEL: f32 = 12.0;
-pub const T_CAP: f32 = 11.0;
-pub const T_MICRO: f32 = 10.0;
 
 // colour math here---
 
-pub fn wash(col: Color32, alpha: u8) -> Color32 {
-    Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), alpha)
-}
-
-pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round().clamp(0.0, 255.0) as u8;
-    Color32::from_rgba_unmultiplied(
-        f(a.r(), b.r()),
-        f(a.g(), b.g()),
-        f(a.b(), b.b()),
-        f(a.a(), b.a()),
-    )
-}
-
-pub fn lighten(col: Color32, t: f32) -> Color32 {
-    mix(col, Color32::WHITE, t)
-}
-
-pub fn darken(col: Color32, t: f32) -> Color32 {
-    mix(col, Color32::BLACK, t)
-}
-
-pub fn on(bg: Color32) -> Color32 {
-    let l = 0.299 * bg.r() as f32 + 0.587 * bg.g() as f32 + 0.114 * bg.b() as f32;
-    if l > 150.0 {
-        c(0x10, 0x12, 0x11)
-    } else {
-        c(0xF4, 0xF7, 0xF5)
-    }
-}
-
 // shapes here---
-
-pub fn rounded_poly(rect: Rect, radius: f32) -> Vec<Pos2> {
-    let r = radius.min(rect.width() * 0.5).min(rect.height() * 0.5).max(0.0);
-    if r <= 0.5 {
-        return vec![
-            rect.left_top(),
-            rect.right_top(),
-            rect.right_bottom(),
-            rect.left_bottom(),
-        ];
-    }
-    let steps = ((r * 0.9) as usize).clamp(5, 18);
-    let mut pts = Vec::with_capacity(steps * 4 + 4);
-    let corners = [
-        (rect.right() - r, rect.top() + r, -std::f32::consts::FRAC_PI_2),
-        (rect.right() - r, rect.bottom() - r, 0.0),
-        (rect.left() + r, rect.bottom() - r, std::f32::consts::FRAC_PI_2),
-        (rect.left() + r, rect.top() + r, std::f32::consts::PI),
-    ];
-    for (cx, cy, a0) in corners {
-        for i in 0..=steps {
-            let a = a0 + std::f32::consts::FRAC_PI_2 * (i as f32 / steps as f32);
-            pts.push(Pos2::new(cx + a.cos() * r, cy + a.sin() * r));
-        }
-    }
-    pts
-}
-
-pub fn fill_grad_poly(painter: &egui::Painter, pts: &[Pos2], a: Color32, b: Color32, dir: Vec2) {
-    painter.add(grad_poly_shape(pts, a, b, dir));
-}
-
-pub fn grad_poly_shape(pts: &[Pos2], a: Color32, b: Color32, dir: Vec2) -> Shape {
-    if pts.len() < 3 {
-        return Shape::Noop;
-    }
-    let dir = if dir.length_sq() < 1e-6 {
-        Vec2::new(0.0, 1.0)
-    } else {
-        dir.normalized()
-    };
-    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-    for p in pts {
-        let t = p.to_vec2().dot(dir);
-        lo = lo.min(t);
-        hi = hi.max(t);
-    }
-    let span = (hi - lo).max(0.0001);
-    let at = |p: Pos2| -> Color32 { mix(a, b, (p.to_vec2().dot(dir) - lo) / span) };
-
-    let mut centre = Vec2::ZERO;
-    for p in pts {
-        centre += p.to_vec2();
-    }
-    let centre = (centre / pts.len() as f32).to_pos2();
-
-    let mut mesh = Mesh::default();
-    mesh.colored_vertex(centre, at(centre));
-    for p in pts {
-        mesh.colored_vertex(*p, at(*p));
-    }
-    let n = pts.len() as u32;
-    for i in 0..n {
-        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
-    }
-
-    const FEATHER: f32 = 0.9;
-    let base = mesh.vertices.len() as u32;
-    for p in pts {
-        let out = (*p - centre).normalized() * FEATHER;
-        let q = *p + out;
-        mesh.colored_vertex(q, wash(at(*p), 0));
-    }
-    for i in 0..n {
-        let j = (i + 1) % n;
-        mesh.add_triangle(1 + i, base + i, base + j);
-        mesh.add_triangle(1 + i, base + j, 1 + j);
-    }
-    Shape::mesh(mesh)
-}
-
-pub fn grad_rect(painter: &egui::Painter, rect: Rect, radius: f32, a: Color32, b: Color32, dir: Vec2) {
-    let pts = rounded_poly(rect, radius);
-    fill_grad_poly(painter, &pts, a, b, dir);
-}
 
 pub fn grad_diamond(painter: &egui::Painter, centre: Pos2, r: f32, a: Color32, b: Color32) {
     let pts = vec![
@@ -573,49 +414,6 @@ pub fn glass_body(opacity: f32) -> Color32 {
     pal().glass
 }
 
-pub fn hover_surface(
-    painter: &egui::Painter,
-    rect: Rect,
-    radius: f32,
-    accent: Color32,
-    t: f32,
-    on: bool,
-) {
-    let p = pal();
-    let t = t.clamp(0.0, 1.0);
-    if t <= 0.005 && !on {
-        return;
-    }
-    let lit = t.max(if on { 1.0 } else { 0.0 });
-    let fill = if p.dark { p.raised } else { p.sunken };
-    painter.rect_filled(rect, Rounding::same(radius), wash(fill, (255.0 * lit) as u8));
-    let edge = if on { accent } else { p.line_strong };
-    painter.rect_stroke(
-        rect.shrink(0.5),
-        Rounding::same(radius),
-        Stroke::new(1.0_f32, wash(edge, ((if on { 255.0 } else { 140.0 }) * lit) as u8)),
-    );
-}
-
-pub fn glass_surface(painter: &egui::Painter, rect: Rect, radius: f32, opacity: f32) {
-    let _ = opacity;
-    let p = pal();
-    painter.rect_filled(rect, Rounding::same(radius), p.solid_hi);
-    painter.rect_stroke(rect.shrink(0.5), Rounding::same(radius), Stroke::new(1.0_f32, p.line_strong));
-    top_edge(painter, rect);
-}
-
-pub fn top_edge(painter: &egui::Painter, rect: Rect) {
-    let p = pal();
-    let a = if p.dark { 15 } else { 0 };
-    if a > 0 {
-        painter.line_segment(
-            [rect.left_top() + Vec2::new(1.0, 1.5), rect.right_top() + Vec2::new(-1.0, 1.5)],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, a)),
-        );
-    }
-}
-
 pub fn glass_plate(painter: &egui::Painter, rect: Rect, radius: f32, opacity: f32) {
     let _ = opacity;
     let p = pal();
@@ -629,50 +427,6 @@ pub fn island_frame(radius: f32) -> egui::Frame {
         .fill(p.solid)
         .rounding(Rounding::same(radius))
         .stroke(Stroke::new(1.0_f32, p.line))
-}
-
-pub fn tracked_text(
-    painter: &egui::Painter,
-    left_centre: Pos2,
-    text: &str,
-    font: egui::FontId,
-    color: Color32,
-    tracking: f32,
-) -> f32 {
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        text,
-        0.0,
-        egui::TextFormat {
-            font_id: font,
-            color,
-            extra_letter_spacing: tracking,
-            ..Default::default()
-        },
-    );
-    let galley = painter.ctx().fonts(|f| f.layout_job(job));
-    let size = galley.rect.size();
-    painter.galley(
-        Pos2::new(left_centre.x, left_centre.y - size.y * 0.5),
-        galley,
-        color,
-    );
-    (size.x - tracking).max(0.0)
-}
-
-pub fn tracked_width(ctx: &egui::Context, text: &str, font: egui::FontId, tracking: f32) -> f32 {
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        text,
-        0.0,
-        egui::TextFormat {
-            font_id: font,
-            extra_letter_spacing: tracking,
-            ..Default::default()
-        },
-    );
-    let w = ctx.fonts(|f| f.layout_job(job)).rect.width();
-    (w - tracking).max(0.0)
 }
 
 pub fn lift_shadow(painter: &egui::Painter, rect: Rect, radius: f32, lift: f32) {
@@ -702,74 +456,6 @@ pub fn lift_shadow(painter: &egui::Painter, rect: Rect, radius: f32, lift: f32) 
 
 // visuals here---
 
-pub fn apply(ctx: &egui::Context) {
-    let p = pal();
-    let mut v = if p.dark {
-        egui::Visuals::dark()
-    } else {
-        egui::Visuals::light()
-    };
-
-    v.override_text_color = Some(p.text);
-    v.panel_fill = Color32::TRANSPARENT;
-    v.window_fill = p.solid;
-    v.extreme_bg_color = if p.dark { Color32::BLACK } else { Color32::WHITE };
-    v.faint_bg_color = p.raised;
-    v.window_stroke = Stroke::new(1.0_f32, p.line);
-    v.window_rounding = Rounding::same(R_PANEL);
-    v.menu_rounding = Rounding::same(R_MD);
-    v.selection.bg_fill = wash(p.primary, if p.dark { 150 } else { 90 });
-    v.selection.stroke = Stroke::new(1.0_f32, p.primary);
-    v.hyperlink_color = p.primary_light;
-    v.popup_shadow = egui::epaint::Shadow::NONE;
-    v.window_shadow = v.popup_shadow;
-    v.text_cursor.stroke = Stroke::new(2.0_f32, p.primary_light);
-    v.window_stroke = Stroke::new(1.0_f32, p.line_strong);
-
-    let w = &mut v.widgets;
-    w.noninteractive.bg_fill = p.solid;
-    w.noninteractive.weak_bg_fill = p.solid;
-    w.noninteractive.bg_stroke = Stroke::new(1.0_f32, p.line);
-    w.noninteractive.fg_stroke = Stroke::new(1.0_f32, p.text_dim);
-    w.noninteractive.rounding = Rounding::same(R_CTRL);
-
-    w.inactive.bg_fill = p.sunken;
-    w.inactive.weak_bg_fill = p.sunken;
-    w.inactive.bg_stroke = Stroke::new(1.0_f32, p.line_strong);
-    w.inactive.fg_stroke = Stroke::new(1.0_f32, p.text);
-    w.inactive.rounding = Rounding::same(R_CTRL);
-
-    w.hovered.bg_fill = p.solid_hi;
-    w.hovered.weak_bg_fill = p.solid_hi;
-    w.hovered.bg_stroke = Stroke::new(1.0_f32, p.line_strong);
-    w.hovered.fg_stroke = Stroke::new(1.0_f32, p.text);
-    w.hovered.rounding = Rounding::same(R_CTRL);
-    w.hovered.expansion = 0.0;
-
-    w.active.bg_fill = p.primary_quiet_hi;
-    w.active.weak_bg_fill = p.primary_quiet_hi;
-    w.active.bg_stroke = Stroke::new(1.0_f32, p.primary);
-    w.active.fg_stroke = Stroke::new(1.0_f32, p.primary_light);
-    w.active.rounding = Rounding::same(R_CTRL);
-
-    w.open.bg_fill = p.raised;
-    w.open.weak_bg_fill = p.raised;
-    w.open.bg_stroke = Stroke::new(1.0_f32, p.line);
-    w.open.fg_stroke = Stroke::new(1.0_f32, p.text);
-    w.open.rounding = Rounding::same(R_CTRL);
-
-    ctx.all_styles_mut(|s| {
-        s.visuals = v.clone();
-        s.spacing.item_spacing = Vec2::new(8.0, 8.0);
-        s.spacing.button_padding = Vec2::new(11.0, 6.0);
-        s.spacing.window_margin = Margin::same(18.0);
-        s.spacing.menu_margin = Margin::same(6.0);
-        s.spacing.scroll.bar_width = 8.0;
-        s.spacing.scroll.floating = true;
-        s.visuals.clip_rect_margin = 2.0;
-    });
-}
-
 // script colours here---
 
 pub fn element_color(e: Element) -> Color32 {
@@ -792,12 +478,6 @@ pub fn element_band(e: Element) -> Color32 {
         Element::Action | Element::Act => Color32::TRANSPARENT,
         _ => tint(element_color(e), if p.dark { 0.035 } else { 0.05 }),
     }
-}
-
-pub fn tint(col: Color32, k: f32) -> Color32 {
-    let k = k.clamp(0.0, 1.0);
-    let f = |v: u8| (v as f32 * k).round() as u8;
-    Color32::from_rgba_premultiplied(f(col.r()), f(col.g()), f(col.b()), (255.0 * k).round() as u8)
 }
 
 pub fn character_colors(names: &[String], seed: u32) -> std::collections::HashMap<String, Color32> {
@@ -859,23 +539,6 @@ fn voices_at(names: &[String], seed: u32, s: f32, l: f32) -> std::collections::H
         .collect()
 }
 
-pub fn hsl(h: f32, s: f32, l: f32) -> Color32 {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let hp = (h.fract() + 1.0).fract() * 6.0;
-    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
-    let (r, g, b) = match hp as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let m = l - c * 0.5;
-    let to = |v: f32| ((v + m).clamp(0.0, 1.0) * 255.0).round() as u8;
-    c3(to(r), to(g), to(b))
-}
-
 fn c3(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
@@ -892,34 +555,12 @@ pub fn element_ink(e: Element) -> Color32 {
 
 // fonts here---
 
-const ANYBODY_REGULAR: &[u8] = include_bytes!("../assets/fonts/Anybody-Regular.ttf");
-const ANYBODY_MEDIUM: &[u8] = include_bytes!("../assets/fonts/Anybody-Medium.ttf");
-const ANYBODY_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Anybody-SemiBold.ttf");
-const ANYBODY_BOLD: &[u8] = include_bytes!("../assets/fonts/Anybody-Bold.ttf");
-const ANYBODY_DISPLAY: &[u8] = include_bytes!("../assets/fonts/Anybody-Display.ttf");
-const MONO_REGULAR: &[u8] = include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf");
-const MONO_MEDIUM: &[u8] = include_bytes!("../assets/fonts/JetBrainsMono-Medium.ttf");
 
 const PAGE_REGULAR: &[u8] = include_bytes!("../assets/fonts/CourierPrime-Regular.ttf");
 const PAGE_BOLD: &[u8] = include_bytes!("../assets/fonts/CourierPrime-Bold.ttf");
 
 pub const PAGE_FONT_NAME: &str = "Courier Prime";
 
-pub fn medium() -> FontFamily {
-    FontFamily::Name("anybody-medium".into())
-}
-pub fn semibold() -> FontFamily {
-    FontFamily::Name("anybody-semibold".into())
-}
-pub fn bold() -> FontFamily {
-    FontFamily::Name("anybody-bold".into())
-}
-pub fn display() -> FontFamily {
-    FontFamily::Name("anybody-display".into())
-}
-pub fn hud() -> FontFamily {
-    FontFamily::Name("mono-medium".into())
-}
 pub fn page() -> FontFamily {
     FontFamily::Name("page".into())
 }
@@ -927,81 +568,6 @@ pub fn page_bold() -> FontFamily {
     FontFamily::Name("page-bold".into())
 }
 
-pub fn install_fonts(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
-
-    for (key, bytes) in [
-        ("Anybody", ANYBODY_REGULAR),
-        ("AnybodyMedium", ANYBODY_MEDIUM),
-        ("AnybodySemiBold", ANYBODY_SEMIBOLD),
-        ("AnybodyBold", ANYBODY_BOLD),
-        ("AnybodyDisplay", ANYBODY_DISPLAY),
-        ("JetBrainsMono", MONO_REGULAR),
-        ("JetBrainsMonoMedium", MONO_MEDIUM),
-        ("CourierPrime", PAGE_REGULAR),
-        ("CourierPrimeBold", PAGE_BOLD),
-    ] {
-        fonts
-            .font_data
-            .insert(key.to_string(), FontData::from_static(bytes));
-    }
-
-    fonts
-        .families
-        .entry(FontFamily::Proportional)
-        .or_default()
-        .insert(0, "Anybody".to_string());
-    fonts
-        .families
-        .entry(FontFamily::Monospace)
-        .or_default()
-        .insert(0, "JetBrainsMono".to_string());
-
-    let proportional = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    let mono = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
-    for (family, key, rest) in [
-        (medium(), "AnybodyMedium", &proportional),
-        (semibold(), "AnybodySemiBold", &proportional),
-        (bold(), "AnybodyBold", &proportional),
-        (display(), "AnybodyDisplay", &proportional),
-        (hud(), "JetBrainsMonoMedium", &mono),
-    ] {
-        let mut stack = vec![key.to_string()];
-        stack.extend(rest.iter().cloned());
-        fonts.families.insert(family, stack);
-    }
-
-    let mut page_stack = vec!["CourierPrime".to_string()];
-    page_stack.extend(mono.iter().cloned());
-    fonts.families.insert(page(), page_stack.clone());
-    let mut bold_stack = vec!["CourierPrimeBold".to_string()];
-    bold_stack.extend(page_stack);
-    fonts.families.insert(page_bold(), bold_stack);
-
-    ctx.set_fonts(fonts);
-}
-
-pub fn font(size: f32) -> egui::FontId {
-    egui::FontId::proportional(size)
-}
-pub fn font_med(size: f32) -> egui::FontId {
-    egui::FontId::new(size, medium())
-}
-pub fn font_semi(size: f32) -> egui::FontId {
-    egui::FontId::new(size, semibold())
-}
-pub fn font_bold(size: f32) -> egui::FontId {
-    egui::FontId::new(size, bold())
-}
-pub fn font_mono(size: f32) -> egui::FontId {
-    egui::FontId::monospace(size)
-}
-pub fn font_display(size: f32) -> egui::FontId {
-    egui::FontId::new(size, display())
-}
-pub fn font_hud(size: f32) -> egui::FontId {
-    egui::FontId::new(size, hud())
-}
 pub fn font_page(size: f32) -> egui::FontId {
     egui::FontId::new(size, page())
 }
