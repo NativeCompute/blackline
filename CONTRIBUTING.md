@@ -39,8 +39,9 @@ On Linux, `./install.sh` builds and installs it for your user.
 4. **Linux, Windows and WebAssembly all build.** Code that only works on one
    goes behind `#[cfg(...)]`, and the others still build.
 5. **The design language is NativeCompute's.** Colours, type and controls come
-   from `src/theme.rs` and `src/ui.rs`; do not hard-code a colour or draw a
-   one-off control. Void black, chrome, one signal blue, hairlines, 2px
+   from [NCF](https://github.com/NativeCompute/ncf) through `src/theme.rs` and
+   `src/ui.rs`; do not hard-code a colour or draw a one-off control. A control
+   Blackline needs that NCF lacks belongs in NCF. Void black, chrome, one signal blue, hairlines, 2px
    corners, no glows or shadows.
 6. **Keep it small.** One change per pull request, described in plain words:
    what it does for a writer, and how you checked it.
