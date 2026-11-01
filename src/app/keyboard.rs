@@ -1,7 +1,6 @@
-use eframe::egui::{self, Align, Key, Layout, Rect, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align, Key, Layout};
 
 use super::App;
-use crate::anim;
 use crate::icons::Icon;
 use crate::keys::{self, Command};
 use crate::theme::{self, pal};
@@ -124,7 +123,7 @@ impl App {
                 }
                 let chords: Vec<String> = self.settings.keys.chords(cmd, web).iter().map(keys::text).collect();
                 let text = if listening { "Press keys…".to_string() } else { chords.join("  or  ") };
-                if keycap(ui, &text, listening, custom) {
+                if keys::keycap(ui, &text, listening, custom) {
                     self.key_capture = if listening { None } else { Some(cmd) };
                     self.key_refusal = None;
                 }
@@ -136,48 +135,4 @@ impl App {
             }
         }
     }
-}
-
-fn keycap(ui: &mut egui::Ui, text: &str, listening: bool, custom: bool) -> bool {
-    let p = pal();
-    let font = theme::font_mono(theme::T_CAP);
-    let g = ui.painter().layout_no_wrap(text.to_string(), font, p.text);
-    let size = Vec2::new(g.rect.width() + 20.0, 24.0);
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let hot = anim::ease(ui.ctx(), resp.id, resp.hovered(), anim::HOVER);
-    let lit = anim::ease(ui.ctx(), resp.id.with("lit"), listening, 0.24);
-    let fill = theme::mix(p.sunken, theme::mix(p.sunken, p.primary, 0.25), lit.max(0.4 * hot));
-    ui.painter().rect_filled(rect, egui::Rounding::same(6.0), fill);
-    ui.painter().line_segment(
-        [
-            rect.left_bottom() + Vec2::new(5.0, -0.5),
-            rect.right_bottom() + Vec2::new(-5.0, -0.5),
-        ],
-        Stroke::new(1.0_f32, theme::wash(p.line_strong, 160)),
-    );
-    let edge = if listening {
-        theme::wash(p.primary_light, 200)
-    } else if custom {
-        theme::wash(p.primary_light, 110)
-    } else {
-        theme::wash(p.line_strong, 140)
-    };
-    ui.painter().rect_stroke(rect, egui::Rounding::same(6.0), Stroke::new(1.0_f32, edge));
-    let ink = if listening {
-        p.primary_light
-    } else if custom {
-        theme::mix(p.text, p.primary_light, 0.35)
-    } else {
-        theme::mix(p.text_dim, p.text, hot)
-    };
-    let at = Rect::from_center_size(rect.center(), g.rect.size()).min;
-    ui.painter().galley(at, g, ink);
-    if listening {
-        anim::keep_going(ui.ctx());
-    }
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    resp.on_hover_text(if listening { "Press the keys · Esc cancels" } else { "Click, then press the keys you want" })
-        .clicked()
 }

@@ -203,7 +203,7 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = App::with_context(&cc.egui_ctx);
         if app.settings.check_updates {
-            app.update_rx = Some(crate::update::spawn());
+            app.update_rx = Some(crate::update::spawn(crate::INFO.repo, crate::INFO.version));
             app.update = crate::update::Status::Checking;
         }
         app
@@ -3709,7 +3709,7 @@ impl App {
             }
         }
         if ui::link(ui, "All releases") {
-            self.store.open_url(crate::update::RELEASES_PAGE);
+            self.store.open_url(&crate::update::releases_page(crate::INFO.repo));
         }
     }
 
