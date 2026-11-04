@@ -200,6 +200,28 @@ pub fn to_markdown(doc: &Document) -> String {
     if !voices.is_empty() {
         s.push_str(&format!("voices: {}\n", voices.join("; ")));
     }
+    let lines: Vec<String> = doc
+        .meta
+        .storylines
+        .iter()
+        .filter(|(_, n)| voice_name_ok(n))
+        .map(|(t, n)| format!("{t}={}", n.trim()))
+        .collect();
+    if !lines.is_empty() {
+        s.push_str(&format!("storylines: {}\n", lines.join("; ")));
+    }
+    if let Some(r) = doc.meta.revision {
+        s.push_str(&format!("revision: {}\n", crate::revision::slug(r)));
+        if !doc.meta.revision_date.trim().is_empty() {
+            s.push_str(&format!("revision_date: {}\n", esc(&doc.meta.revision_date)));
+        }
+        if !doc.meta.revision_base.trim().is_empty() {
+            s.push_str(&format!("revision_base: {}\n", esc(&doc.meta.revision_base)));
+        }
+        if doc.meta.locked {
+            s.push_str("locked: yes\n");
+        }
+    }
     s.push_str("---\n\n");
 
     for b in &doc.blocks {
@@ -208,17 +230,20 @@ pub fn to_markdown(doc: &Document) -> String {
             continue;
         }
         let line = match b.element {
-            Element::SceneHeading => format!("## {}", text),
-            Element::Shot => format!("### {}", text),
-            Element::Action => text.to_string(),
-            Element::Character => format!("**{}**", text),
+            Element::SceneHeading => format!("## {}", with_remark(text, &b.remark)),
+            Element::Shot => format!("### {}", with_remark(text, &b.remark)),
+            Element::Action => with_remark(text, &b.remark),
+            Element::Character => {
+                let cue = if b.dual && !text.is_empty() { format!("{text} ^") } else { text.to_string() };
+                format!("**{}**", with_remark(&cue, &b.remark))
+            }
             Element::Parenthetical => {
                 let inner = text.trim_matches(|c| c == '(' || c == ')').trim();
-                format!("*({})*", inner)
+                format!("*({})*", with_remark(inner, &b.remark))
             }
-            Element::Dialogue => format!("> {}", text),
-            Element::Transition => format!("`{}`", text),
-            Element::Act => format!("# {}", text),
+            Element::Dialogue => format!("> {}", with_remark(text, &b.remark)),
+            Element::Transition => format!("`{}`", with_remark(text, &b.remark)),
+            Element::Act => format!("# {}", with_remark(text, &b.remark)),
         };
         s.push_str(line.trim_end());
         if b.element == Element::SceneHeading && has_card(b) {
@@ -228,6 +253,41 @@ pub fn to_markdown(doc: &Document) -> String {
         s.push_str("\n\n");
     }
     s
+}
+
+fn with_remark(text: &str, remark: &str) -> String {
+    let r = remark.replace('\n', " ").replace("]]", "] ]");
+    let r = r.trim();
+    if r.is_empty() || text.trim().is_empty() {
+        text.to_string()
+    } else {
+        format!("{text} [[{r}]]")
+    }
+}
+
+fn split_remark(s: &str) -> (&str, &str) {
+    if let Some(body) = s.strip_suffix("]]") {
+        if let Some(i) = body.rfind(" [[") {
+            let text = &body[..i];
+            let remark = &body[i + 3..];
+            let tidy = !text.trim().is_empty()
+                && !text.ends_with(char::is_whitespace)
+                && !remark.is_empty()
+                && remark.trim() == remark
+                && !remark.contains("]]");
+            if tidy {
+                return (text, remark);
+            }
+        }
+    }
+    (s, "")
+}
+
+fn split_dual(cue: &str) -> (&str, bool) {
+    match cue.strip_suffix(" ^") {
+        Some(name) if !name.trim().is_empty() && !name.ends_with(char::is_whitespace) => (name, true),
+        _ => (cue, false),
+    }
 }
 
 fn has_card(b: &Block) -> bool {
@@ -279,6 +339,24 @@ fn parse_voices(v: &str) -> Vec<(String, u16)> {
     out
 }
 
+fn parse_storylines(v: &str) -> Vec<(usize, String)> {
+    let mut out: Vec<(usize, String)> = Vec::new();
+    for part in v.split(';') {
+        let Some((tint, name)) = part.split_once('=') else {
+            continue;
+        };
+        let Ok(tint) = tint.trim().parse::<usize>() else {
+            continue;
+        };
+        let name = name.trim();
+        if voice_name_ok(name) && !out.iter().any(|(t, _)| *t == tint) {
+            out.push((tint, name.to_string()));
+        }
+    }
+    out.sort_by_key(|(t, _)| *t);
+    out
+}
+
 fn esc(s: &str) -> String {
     s.replace('\n', " ").trim().to_string()
 }
@@ -307,6 +385,11 @@ fn split_front_matter(text: &str) -> (Meta, &str) {
                 "draft" => meta.draft = v,
                 "starred" => meta.starred = matches!(v.as_str(), "yes" | "true" | "1"),
                 "voices" => meta.voices = parse_voices(&v),
+                "storylines" => meta.storylines = parse_storylines(&v),
+                "revision" => meta.revision = crate::revision::from_slug(&v),
+                "revision_date" => meta.revision_date = v,
+                "revision_base" => meta.revision_base = v,
+                "locked" => meta.locked = matches!(v.as_str(), "yes" | "true" | "1"),
                 _ => {}
             }
         }
@@ -323,10 +406,6 @@ pub fn from_markdown(text: &str) -> Document {
     doc.blocks.clear();
 
     let mut id = 0u64;
-    let mut push = |doc: &mut Document, element: Element, text: String| {
-        id += 1;
-        doc.blocks.push(Block::new(id, element, &text));
-    };
 
     for raw in body.lines() {
         let line = raw.trim();
@@ -343,42 +422,58 @@ pub fn from_markdown(text: &str) -> Document {
             continue;
         }
         if let Some(rest) = line.strip_prefix("### ") {
-            push(&mut doc, Element::Shot, rest.trim().to_uppercase());
+            add(&mut doc, &mut id, Element::Shot, rest, true, false);
         } else if let Some(rest) = line.strip_prefix("## ") {
-            push(&mut doc, Element::SceneHeading, rest.trim().to_uppercase());
+            add(&mut doc, &mut id, Element::SceneHeading, rest, true, false);
         } else if line == "##" {
-            push(&mut doc, Element::SceneHeading, String::new());
+            add(&mut doc, &mut id, Element::SceneHeading, "", false, false);
         } else if let Some(rest) = line.strip_prefix("# ") {
-            push(&mut doc, Element::Act, rest.trim().to_uppercase());
+            add(&mut doc, &mut id, Element::Act, rest, true, false);
         } else if line == "#" {
-            push(&mut doc, Element::Act, String::new());
+            add(&mut doc, &mut id, Element::Act, "", false, false);
         } else if let Some(rest) = line.strip_prefix("> ") {
-            push(&mut doc, Element::Dialogue, rest.trim().to_string());
+            add(&mut doc, &mut id, Element::Dialogue, rest, false, false);
         } else if line == ">" {
-            push(&mut doc, Element::Dialogue, String::new());
+            add(&mut doc, &mut id, Element::Dialogue, "", false, false);
         } else if line.len() >= 4 && line.starts_with("**") && line.ends_with("**") {
-            let inner = line[2..line.len() - 2].trim();
-            push(&mut doc, Element::Character, inner.to_uppercase());
+            add(&mut doc, &mut id, Element::Character, &line[2..line.len() - 2], true, true);
         } else if line.len() >= 2
             && line.starts_with('`')
             && line.ends_with('`')
             && !line[1..line.len() - 1].contains('`')
         {
-            let inner = line[1..line.len() - 1].trim();
-            push(&mut doc, Element::Transition, inner.to_uppercase());
+            add(&mut doc, &mut id, Element::Transition, &line[1..line.len() - 1], true, false);
         } else if line.starts_with("*(") && line.ends_with(")*") {
-            let inner = line[1..line.len() - 1].trim();
-            push(&mut doc, Element::Parenthetical, inner.to_string());
+            push_paren(&mut doc, &mut id, &line[2..line.len() - 2]);
         } else if line.starts_with('(') && line.ends_with(')') {
-            push(&mut doc, Element::Parenthetical, line.to_string());
+            push_paren(&mut doc, &mut id, &line[1..line.len() - 1]);
         } else {
-            push(&mut doc, Element::Action, line.to_string());
+            add(&mut doc, &mut id, Element::Action, line, false, false);
         }
     }
 
     doc.ensure_not_empty();
     doc.reseed_ids();
     doc
+}
+
+fn add(doc: &mut Document, id: &mut u64, element: Element, raw: &str, upper: bool, dual: bool) {
+    let (text, remark) = split_remark(raw.trim());
+    let (text, dual) = if dual { split_dual(text) } else { (text, false) };
+    let text = if upper { text.trim().to_uppercase() } else { text.trim().to_string() };
+    *id += 1;
+    let mut b = Block::new(*id, element, &text);
+    b.remark = remark.to_string();
+    b.dual = dual;
+    doc.blocks.push(b);
+}
+
+fn push_paren(doc: &mut Document, id: &mut u64, inside: &str) {
+    let (text, remark) = split_remark(inside.trim());
+    add(doc, id, Element::Parenthetical, &format!("({})", text.trim()), false, false);
+    if let Some(last) = doc.blocks.last_mut() {
+        last.remark = remark.to_string();
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

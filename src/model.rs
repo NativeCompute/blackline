@@ -120,6 +120,8 @@ pub struct Block {
     pub text: String,
     pub note: String,
     pub tint: Option<usize>,
+    pub remark: String,
+    pub dual: bool,
 }
 
 impl Block {
@@ -130,6 +132,8 @@ impl Block {
             text: text.to_string(),
             note: String::new(),
             tint: None,
+            remark: String::new(),
+            dual: false,
         }
     }
 }
@@ -142,11 +146,33 @@ pub struct Meta {
     pub draft: String,
     pub starred: bool,
     pub voices: Vec<(String, u16)>,
+    pub storylines: Vec<(usize, String)>,
+    pub revision: Option<usize>,
+    pub revision_date: String,
+    pub revision_base: String,
+    pub locked: bool,
 }
 
 impl Meta {
     pub fn voice(&self, name: &str) -> Option<u16> {
         self.voices.iter().find(|(n, _)| n == name).map(|(_, h)| *h)
+    }
+
+    pub fn storyline(&self, tint: usize) -> Option<&str> {
+        self.storylines.iter().find(|(t, _)| *t == tint).map(|(_, n)| n.as_str())
+    }
+
+    pub fn set_storyline(&mut self, tint: usize, name: &str) {
+        self.storylines.retain(|(t, _)| *t != tint);
+        let name = name.trim();
+        if !name.is_empty() {
+            self.storylines.push((tint, name.to_string()));
+            self.storylines.sort_by_key(|(t, _)| *t);
+        }
+    }
+
+    pub fn revising(&self) -> bool {
+        self.revision.is_some() && !self.revision_base.is_empty()
     }
 
     pub fn set_voice(&mut self, name: &str, hue: Option<u16>) {

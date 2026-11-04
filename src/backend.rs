@@ -141,7 +141,7 @@ impl Access {
 
 #[derive(Debug)]
 pub enum Load {
-    Ready(Document, Access),
+    Ready(Box<Document>, Access),
     Pending,
     Failed(String),
 }
@@ -309,7 +309,7 @@ mod local {
 
         fn load(&mut self, key: &Path) -> Load {
             match storage::load(key) {
-                Ok(doc) => Load::Ready(doc, Access::Edit),
+                Ok(doc) => Load::Ready(Box::new(doc), Access::Edit),
                 Err(e) => Load::Failed(e.to_string()),
             }
         }

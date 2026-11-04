@@ -1104,3 +1104,63 @@ fn the_app_icon_is_drawn_from_the_mark() {
     let shipped = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/packaging/blackline.ico")).unwrap();
     assert_eq!(shipped, ico, "packaging/blackline.ico is regenerated from the mark");
 }
+
+// blue pages format here---
+
+const A_BLUE_PAGES_FILE: &str = "---\ntitle: Crossfire\nauthor: Sam\ncontact: \ndraft: Blue\nstorylines: 0=Maria; 2=The heist\nrevision: blue\nrevision_date: 2026-11-04\nrevision_base: 2026-11-04_10-00-00.md\nlocked: yes\n---\n\n## INT. KITCHEN - NIGHT [[too dark?]]\n<!-- scene: tint=2 | They argue. -->\n\nThe kettle screams. [[cut the kettle]]\n\n**MARIA**\n\n> I said stop.\n\n**JONAS ^ [[louder]]**\n\n*(over her [[maybe cut]])*\n\n> I'm not stopping!\n\n### ON THE KETTLE [[insert]]\n\n`CUT TO: [[or SMASH CUT]]`\n\n# ACT TWO [[midpoint]]\n\n";
+
+#[test]
+fn every_blue_pages_marker_round_trips_exactly() {
+    let d = storage::from_markdown(A_BLUE_PAGES_FILE);
+    let cue = d.blocks.iter().find(|b| b.text == "JONAS").expect("the dual cue keeps its name");
+    assert!(cue.dual);
+    assert_eq!(cue.remark, "louder");
+    assert!(!d.blocks.iter().find(|b| b.text == "MARIA").unwrap().dual);
+    let heading = &d.blocks[0];
+    assert_eq!(heading.text, "INT. KITCHEN - NIGHT");
+    assert_eq!(heading.remark, "too dark?");
+    assert_eq!(heading.note, "They argue.");
+    assert_eq!(heading.tint, Some(2));
+    let paren = d.blocks.iter().find(|b| b.element == Element::Parenthetical).unwrap();
+    assert_eq!(paren.text, "(over her)");
+    assert_eq!(paren.remark, "maybe cut");
+    assert_eq!(d.blocks.iter().find(|b| b.element == Element::Transition).unwrap().remark, "or SMASH CUT");
+    assert_eq!(d.meta.storyline(2), Some("The heist"));
+    assert_eq!(d.meta.revision, Some(0));
+    assert!(d.meta.revising() && d.meta.locked);
+    assert_eq!(storage::to_markdown(&d), A_BLUE_PAGES_FILE);
+}
+
+#[test]
+fn text_that_only_looks_like_a_marker_is_left_exactly_as_it_was() {
+    let lookalikes = [
+        "Two spaces before  [[this]] stay text.",
+        "Glued[[on]] stays text.",
+        "Odd [[a]] b]] stays text.",
+        "Padded [[ inside ]] stays text.",
+        "[[only a bracket]]",
+        "**BOB^**",
+        "**BOB  ^**",
+        "> She says [[nothing]]",
+    ];
+    for line in lookalikes {
+        let file = format!("---\ntitle: T\nauthor: \ncontact: \ndraft: \n---\n\n## INT. X - DAY\n\n{line}\n\n");
+        let d = storage::from_markdown(&file);
+        assert_eq!(storage::to_markdown(&d), file, "{line:?} must re-save unchanged");
+    }
+    let d = storage::from_markdown("**BOB^**\n");
+    assert!(!d.blocks[0].dual, "a caret glued to the name is not a dual marker");
+}
+
+#[test]
+fn a_script_without_the_new_things_writes_none_of_them() {
+    let mut d = sample();
+    d.normalize();
+    let md = storage::to_markdown(&d);
+    for key in ["storylines:", "revision", "locked:", "[[", " ^**"] {
+        assert!(!md.contains(key), "{key} must only appear once it is used");
+    }
+    d.meta.set_storyline(1, "  ");
+    d.blocks[1].remark = "   ".into();
+    assert_eq!(storage::to_markdown(&d), md, "blank names and notes write nothing");
+}
