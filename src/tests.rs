@@ -676,6 +676,7 @@ fn a_pdf_of_some_pages_has_just_those_pages() {
             voices: Some(inks),
             scene_numbers: true,
             notes: false,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -1458,3 +1459,101 @@ fn beat_guides_land_on_the_usual_pages() {
     assert_eq!(crate::cards::beat_scene(&spans, 32, 0.30), Some(1));
     assert_eq!(crate::cards::beat_scene(&spans, 32, 0.90), Some(2));
 }
+
+fn long_take(scenes: usize) -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    for n in 0..scenes {
+        d.push(Element::SceneHeading, &format!("INT. ROOM {n} - NIGHT"));
+        d.push(Element::Action, "The radiator ticks. Somebody counts the money twice and still gets a different number each time.");
+        d.push(Element::Character, if n % 2 == 0 { "MARIA" } else { "JONAS" });
+        d.push(Element::Dialogue, &"Tell me again how this ends, and this time leave out the part where we get away with it. ".repeat(3));
+    }
+    d.reseed_ids();
+    d
+}
+
+fn page_text(p: &[export::Line]) -> Vec<String> {
+    p.iter().map(|l| l.text.clone()).collect()
+}
+
+#[test]
+fn letters_for_added_pages_run_a_to_z_then_double() {
+    assert_eq!(export::letter_suffix(0), "A");
+    assert_eq!(export::letter_suffix(1), "B");
+    assert_eq!(export::letter_suffix(25), "Z");
+    assert_eq!(export::letter_suffix(26), "AA");
+}
+
+#[test]
+fn locked_pages_match_the_base_until_something_changes() {
+    let base = long_take(14);
+    let plain = export::paginate(&export::compose(&base));
+    assert!(plain.len() >= 5, "a few pages to lock: {}", plain.len());
+    assert!(
+        plain.iter().any(|p| p.iter().any(|l| l.text == export::MORE)),
+        "some speech should run over a page so the lock has to carry it"
+    );
+    let locked = export::layout(&base, Some(&base));
+    assert_eq!(locked.len(), plain.len());
+    for (k, ((label, page), want)) in locked.iter().zip(&plain).enumerate() {
+        assert_eq!(label, &(k + 1).to_string());
+        assert_eq!(page_text(page), page_text(want), "page {} differs", k + 1);
+    }
+}
+
+#[test]
+fn material_added_to_a_locked_page_goes_onto_a_pages() {
+    let base = long_take(14);
+    let plain = export::paginate(&export::compose(&base));
+    let mut now = base.clone();
+    let on_two = plain[1].iter().find_map(|l| l.block.filter(|id| now.block(*id).map(|b| b.element == Element::Action).unwrap_or(false))).unwrap();
+    let at = now.index_of(on_two).unwrap();
+    let mut extra = now.blocks[at].clone();
+    extra.id = 9000;
+    extra.text = "A long new beat. ".repeat(60);
+    now.blocks.insert(at + 1, extra);
+
+    let locked = export::layout(&now, Some(&base));
+    let labels: Vec<&str> = locked.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.contains(&"2A"), "{labels:?}");
+    let three = labels.iter().position(|l| *l == "3").expect("page 3 keeps its number");
+    assert_eq!(page_text(&locked[three].1), page_text(&plain[2]), "page 3 is untouched");
+    assert_eq!(labels.last().copied(), Some(plain.len().to_string().as_str()), "{labels:?}");
+
+    let mut cut = base.clone();
+    let gone = plain[3].iter().find_map(|l| l.block).unwrap();
+    cut.blocks.retain(|b| b.id != gone);
+    let locked = export::layout(&cut, Some(&base));
+    let labels: Vec<String> = locked.iter().map(|(l, _)| l.clone()).collect();
+    assert!(labels.iter().all(|l| l.chars().all(|c| c.is_ascii_digit())), "a cut never needs an A-page: {labels:?}");
+    assert_eq!(page_text(&locked[4].1), page_text(&plain[4]), "the page after the cut is unchanged");
+}
+
+#[test]
+fn the_pdf_marks_changes_and_can_print_only_the_changed_pages() {
+    let base = long_take(14);
+    let mut now = base.clone();
+    let last = now.blocks.iter().rposition(|b| b.element == Element::Action).unwrap();
+    now.blocks[last].text.push_str(" Changed.");
+    let changed = crate::revision::changed(&base, &now);
+    assert_eq!(changed.len(), 1);
+    let opts = export::PdfOptions {
+        title_page: false,
+        changed: changed.clone(),
+        revision: Some((crate::revision::header(0, "2026-11-04"), crate::revision::paper(0))),
+        changed_only: true,
+        ..Default::default()
+    };
+    let plan = export::pdf_plan(&now, &opts);
+    assert_eq!(plan.len(), 1, "only the page with the change");
+    assert!(plan[0].revised);
+    let page = export::page_of_block(&now, now.blocks[last].id).unwrap();
+    assert_eq!(plan[0].label, page.to_string());
+    assert_eq!(crate::revision::header(0, "2026-11-04"), "Blue Rev. 11/04/26");
+    assert_eq!(crate::revision::header(9, "2026-12-01"), "Double Pink Rev. 12/01/26");
+    let bytes = export::pdf_bytes(&now, &export::PdfOptions { tint: true, ..opts }).unwrap();
+    assert!(bytes.starts_with(b"%PDF"));
+}
+
+

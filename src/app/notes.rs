@@ -306,7 +306,7 @@ impl App {
     }
 
     fn where_is(&self, id: u64) -> String {
-        let page = self.layout.block_pages.get(&id).map(|p| format!("P.{p}")).unwrap_or_else(|| "P.–".into());
+        let page = self.layout.block_pages.get(&id).map(|p| format!("P.{}", self.page_label(*p))).unwrap_or_else(|| "P.–".into());
         let scene = self
             .doc
             .scene_of(id)
@@ -374,7 +374,16 @@ impl App {
             .collect();
         ui::hud(ui, &format!("{} revision / {:02} changed", crate::revision::name(colour), entries.len()), Some(crate::theme::pal().primary_light));
         ui.add_space(4.0);
-        ui::caption(ui, &format!("Since {}", self.doc.meta.revision_date));
+        ui::caption(ui, &format!("{} · since {}", crate::revision::header(colour, &self.doc.meta.revision_date), self.doc.meta.revision_date));
+        ui.add_space(6.0);
+        let mut locked = self.doc.meta.locked;
+        if ui::toggle_row(ui, "Lock pages", "Pages keep their numbers; new material goes on A-pages.", &mut locked) && self.guard_edit() {
+            self.checkpoint();
+            self.doc.meta.locked = locked;
+            self.mark_changed();
+            self.layout_stale = true;
+            self.refresh_layout(true);
+        }
         ui.add_space(8.0);
         if entries.is_empty() {
             ui::body(ui, "Nothing changed yet. Edit any line and it is listed here and marked in the margin.");

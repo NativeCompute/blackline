@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::model::Document;
 
@@ -39,16 +39,26 @@ pub fn paper(index: usize) -> [u8; 3] {
 }
 
 
-fn key(b: &crate::model::Block) -> (crate::model::Element, String, bool) {
+fn key(b: &crate::model::Block) -> Key {
     let text = b.text.split_whitespace().collect::<Vec<_>>().join(" ");
     (b.element, text, b.dual)
 }
 
-pub fn changed(base: &Document, now: &Document) -> HashSet<u64> {
-    let a: Vec<_> = base.blocks.iter().filter(|b| !b.text.trim().is_empty()).map(key).collect();
-    let live: Vec<&crate::model::Block> = now.blocks.iter().filter(|b| !b.text.trim().is_empty()).collect();
-    let b: Vec<_> = live.iter().map(|x| key(x)).collect();
+pub fn header(index: usize, date: &str) -> String {
+    let mut parts = date.trim().split('-');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(y), Some(m), Some(d)) if y.len() == 4 => format!("{} Rev. {m}/{d}/{}", name(index), &y[2..]),
+        _ => format!("{} Rev.", name(index)),
+    }
+}
 
+enum Step {
+    Same(usize, usize),
+    Added(usize),
+    Dropped,
+}
+
+fn align(a: &[Key], b: &[Key]) -> Vec<Step> {
     let mut head = 0;
     while head < a.len() && head < b.len() && a[head] == b[head] {
         head += 1;
@@ -58,10 +68,7 @@ pub fn changed(base: &Document, now: &Document) -> HashSet<u64> {
         tail += 1;
     }
     let (am, bm) = (&a[head..a.len() - tail], &b[head..b.len() - tail]);
-    let mut out = HashSet::new();
-    if am.is_empty() && bm.is_empty() {
-        return out;
-    }
+    let mut out: Vec<Step> = (0..head).map(|k| Step::Same(k, k)).collect();
     let (n, m) = (am.len(), bm.len());
     let mut table = vec![0u32; (n + 1) * (m + 1)];
     let at = |i: usize, j: usize| i * (m + 1) + j;
@@ -75,29 +82,71 @@ pub fn changed(base: &Document, now: &Document) -> HashSet<u64> {
         }
     }
     let (mut i, mut j) = (0, 0);
-    let (mut dropped, mut added) = (false, false);
     while i < n || j < m {
         if i < n && j < m && am[i] == bm[j] {
-            if dropped && !added {
-                out.insert(live[head + j].id);
-            }
-            dropped = false;
-            added = false;
+            out.push(Step::Same(head + i, head + j));
             i += 1;
             j += 1;
         } else if j < m && (i == n || table[at(i, j + 1)] >= table[at(i + 1, j)]) {
-            out.insert(live[head + j].id);
-            added = true;
+            out.push(Step::Added(head + j));
             j += 1;
         } else {
-            dropped = true;
+            out.push(Step::Dropped);
             i += 1;
         }
     }
+    out.extend((0..tail).map(|k| Step::Same(a.len() - tail + k, b.len() - tail + k)));
+    out
+}
+
+type Key = (crate::model::Element, String, bool);
+
+fn live(doc: &Document) -> Vec<&crate::model::Block> {
+    doc.blocks.iter().filter(|b| !b.text.trim().is_empty()).collect()
+}
+
+pub fn pairs(base: &Document, now: &Document) -> HashMap<u64, u64> {
+    let (old, new) = (live(base), live(now));
+    let a: Vec<Key> = old.iter().map(|b| key(b)).collect();
+    let b: Vec<Key> = new.iter().map(|b| key(b)).collect();
+    align(&a, &b)
+        .into_iter()
+        .filter_map(|s| match s {
+            Step::Same(i, j) => Some((old[i].id, new[j].id)),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn changed(base: &Document, now: &Document) -> HashSet<u64> {
+    let (old, new) = (live(base), live(now));
+    let a: Vec<Key> = old.iter().map(|b| key(b)).collect();
+    let b: Vec<Key> = new.iter().map(|b| key(b)).collect();
+    let mut out = HashSet::new();
+    let (mut dropped, mut added) = (false, false);
+    let mut after_last: usize = 0;
+    for s in align(&a, &b) {
+        match s {
+            Step::Same(_, j) => {
+                if dropped && !added {
+                    out.insert(new[j].id);
+                }
+                dropped = false;
+                added = false;
+                after_last = j + 1;
+            }
+            Step::Added(j) => {
+                out.insert(new[j].id);
+                added = true;
+                after_last = j + 1;
+            }
+            Step::Dropped => dropped = true,
+        }
+    }
     if dropped && !added {
-        if let Some(next) = live.get(head + m) {
+        if let Some(next) = new.get(after_last) {
             out.insert(next.id);
-        } else if let Some(prev) = (head + m).checked_sub(1).and_then(|k| live.get(k)) {
+        } else if let Some(prev) = after_last.checked_sub(1).and_then(|k| new.get(k)) {
             out.insert(prev.id);
         }
     }

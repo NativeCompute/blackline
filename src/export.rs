@@ -339,6 +339,134 @@ pub fn page_count(doc: &Document) -> usize {
     paginate(&compose(doc)).len()
 }
 
+pub fn letter_suffix(n: usize) -> String {
+    let mut n = n;
+    let mut out = String::new();
+    loop {
+        out.insert(0, (b'A' + (n % 26) as u8) as char);
+        if n < 26 {
+            break;
+        }
+        n = n / 26 - 1;
+    }
+    out
+}
+
+fn line_ids(l: &Line) -> impl Iterator<Item = u64> + '_ {
+    [l.block, l.right.as_ref().and_then(|r| r.block)].into_iter().flatten()
+}
+
+pub fn page_has(page: &[Line], ids: &std::collections::HashSet<u64>) -> bool {
+    page.iter().any(|l| line_ids(l).any(|id| ids.contains(&id)))
+}
+
+fn speaking(l: &Line) -> bool {
+    matches!(l.element, Some(Element::Dialogue) | Some(Element::Parenthetical)) && !l.dual
+}
+
+pub fn layout(doc: &Document, lock: Option<&Document>) -> Vec<(String, Vec<Line>)> {
+    let lines = compose(doc);
+    let Some(base) = lock else {
+        return paginate(&lines).into_iter().enumerate().map(|(i, p)| ((i + 1).to_string(), p)).collect();
+    };
+    let map = crate::revision::pairs(base, doc);
+    let mut pos: HashMap<(u64, usize), usize> = HashMap::new();
+    let mut seen: HashMap<u64, usize> = HashMap::new();
+    for (i, l) in lines.iter().enumerate() {
+        if let Some(b) = l.block {
+            let n = seen.entry(b).or_insert(0);
+            pos.insert((b, *n), i);
+            *n += 1;
+        }
+    }
+    let mut base_seen: HashMap<u64, usize> = HashMap::new();
+    let mut cuts: Vec<(usize, usize)> = Vec::new();
+    let mut last_known: Option<usize> = None;
+    for (k, page) in paginate(&compose(base)).iter().enumerate() {
+        let mut first: Option<Option<usize>> = None;
+        let mut later: Option<usize> = None;
+        let mut known: Option<usize> = None;
+        for l in page {
+            let Some(b) = l.block else {
+                continue;
+            };
+            let n = base_seen.entry(b).or_insert(0);
+            let here = map.get(&b).and_then(|now| pos.get(&(*now, *n)).copied());
+            *n += 1;
+            if first.is_none() {
+                first = Some(here);
+            }
+            if later.is_none() {
+                later = here;
+            }
+            if here.is_some() {
+                known = here;
+            }
+        }
+        if k > 0 {
+            let anchor = match first {
+                Some(Some(i)) => Some(i),
+                _ => last_known.map(|i| i + 1).or(later),
+            };
+            if let Some(i) = anchor {
+                if i < lines.len() && cuts.last().map(|c| i > c.1).unwrap_or(i > 0) {
+                    cuts.push((k + 1, i));
+                }
+            }
+        }
+        if known.is_some() {
+            last_known = known;
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut number = 1usize;
+    let mut carry_cue: Option<Line> = None;
+    let mut bounds: Vec<(usize, usize, usize)> = Vec::new();
+    for (n, at) in &cuts {
+        bounds.push((number, start, *at));
+        number = *n;
+        start = *at;
+    }
+    bounds.push((number, start, lines.len()));
+    for (n, from, to) in bounds {
+        let mut seg: Vec<Line> = Vec::new();
+        if let Some(cue) = carry_cue.take() {
+            seg.push(cue);
+        }
+        seg.extend_from_slice(&lines[from..to]);
+        let breaks_speech = to < lines.len() && to > 0 && speaking(&lines[to]) && speaking(&lines[to - 1]);
+        let mut more = false;
+        if breaks_speech {
+            let cue = lines[..to]
+                .iter()
+                .rev()
+                .take_while(|l| l.element.is_some() && !l.dual)
+                .find(|l| l.element == Some(Element::Character))
+                .map(|l| cue_without_contd(&l.text));
+            if let Some(cue) = cue {
+                more = true;
+                carry_cue = Some(layout_cue(format!("{cue} {CONTD}")));
+            }
+        }
+        let mut sheets = paginate(&seg);
+        if more {
+            if let Some(last) = sheets.last_mut() {
+                last.push(layout_cue(MORE.to_string()));
+            }
+        }
+        for (k, page) in sheets.into_iter().enumerate() {
+            let label = if k == 0 { n.to_string() } else { format!("{n}{}", letter_suffix(k - 1)) };
+            out.push((label, page));
+        }
+    }
+    if out.is_empty() {
+        out.push(("1".to_string(), Vec::new()));
+    }
+    out
+}
+
 #[allow(dead_code)]
 pub fn runtime_minutes(doc: &Document) -> usize {
     page_count(doc)
@@ -542,6 +670,11 @@ pub struct PdfOptions {
     pub pages: Option<Vec<usize>>,
     pub voices: Option<HashMap<String, Ink>>,
     pub notes: bool,
+    pub changed: std::collections::HashSet<u64>,
+    pub revision: Option<(String, [u8; 3])>,
+    pub lock: Option<Box<Document>>,
+    pub changed_only: bool,
+    pub tint: bool,
 }
 
 impl Default for PdfOptions {
@@ -552,6 +685,11 @@ impl Default for PdfOptions {
             pages: None,
             voices: None,
             notes: false,
+            changed: std::collections::HashSet::new(),
+            revision: None,
+            lock: None,
+            changed_only: false,
+            tint: false,
         }
     }
 }
@@ -559,12 +697,14 @@ impl Default for PdfOptions {
 #[derive(Clone, Debug)]
 pub struct PlannedPage {
     pub number: usize,
+    pub label: String,
+    pub revised: bool,
     pub lines: Vec<(Line, Option<Ink>)>,
     pub right_inks: Vec<Option<Ink>>,
 }
 
 pub fn pdf_plan(doc: &Document, opts: &PdfOptions) -> Vec<PlannedPage> {
-    let pages = paginate(&compose(doc));
+    let pages = layout(doc, opts.lock.as_deref());
     let mut who: Option<String> = None;
     let mut left_who: Option<String> = None;
     let mut right_who: Option<String> = None;
@@ -581,8 +721,9 @@ pub fn pdf_plan(doc: &Document, opts: &PdfOptions) -> Vec<PlannedPage> {
             }
         }
     };
-    for (i, page) in pages.iter().enumerate() {
+    for (i, (label, page)) in pages.iter().enumerate() {
         let number = i + 1;
+        let revised = page_has(page, &opts.changed);
         let mut lines = Vec::with_capacity(page.len());
         let mut right_inks = Vec::with_capacity(page.len());
         for line in page {
@@ -617,9 +758,9 @@ pub fn pdf_plan(doc: &Document, opts: &PdfOptions) -> Vec<PlannedPage> {
             };
             lines.push((line.clone(), ink));
         }
-        let wanted = opts.pages.as_ref().map(|w| w.contains(&number)).unwrap_or(true);
+        let wanted = opts.pages.as_ref().map(|w| w.contains(&number)).unwrap_or(true) && (!opts.changed_only || revised);
         if wanted {
-            out.push(PlannedPage { number, lines, right_inks });
+            out.push(PlannedPage { number, label: label.clone(), revised, lines, right_inks });
         }
     }
     out
@@ -795,17 +936,26 @@ pub fn pdf_bytes(doc: &Document, opts: &PdfOptions) -> Result<Vec<u8>, String> {
 
     // body here---
     for page in &plan {
-        let i = page.number - 1;
-        let (page_idx, layer_idx) = next_sheet(format!("Page {}", page.number));
+        let (page_idx, layer_idx) = next_sheet(format!("Page {}", page.label));
         let layer = pdf.get_page(page_idx).get_layer(layer_idx);
+        if let (true, true, Some((_, [r, g, b]))) = (opts.tint, page.revised, &opts.revision) {
+            layer.set_fill_color(Color::Rgb(Rgb::new(*r as f32 / 255.0, *g as f32 / 255.0, *b as f32 / 255.0, None)));
+            layer.add_rect(printpdf::Rect::new(Mm(0.0), Mm(0.0), Mm(PAGE_W_MM), Mm(PAGE_H_MM)).with_mode(printpdf::path::PaintMode::Fill));
+        }
         layer.set_fill_color(colour(None));
 
-        if i > 0 {
-            let num = format!("{}.", i + 1);
+        let head_y = PAGE_H_MM - 12.7 - LINE_H_MM;
+        let right_edge = LEFT_MARGIN_MM + PAGE_COLS as f32 * CHAR_W_MM;
+        let mut head_x = right_edge;
+        if page.label != "1" {
+            let num = format!("{}.", page.label);
             let cols = num.chars().count() as f32;
-            let x = LEFT_MARGIN_MM + (PAGE_COLS as f32 - cols) * CHAR_W_MM;
-            let y = PAGE_H_MM - 12.7 - LINE_H_MM;
-            layer.use_text(&num, 12.0, Mm(x), Mm(y), &courier);
+            head_x = LEFT_MARGIN_MM + (PAGE_COLS as f32 - cols) * CHAR_W_MM;
+            layer.use_text(&num, 12.0, Mm(head_x), Mm(head_y), &courier);
+        }
+        if let (true, Some((text, _))) = (page.revised, &opts.revision) {
+            let w = (text.chars().count() as f32 + 4.0) * CHAR_W_MM;
+            layer.use_text(text, 12.0, Mm(head_x - w), Mm(head_y), &courier);
         }
 
         let mut inked: Option<Ink> = None;
@@ -819,6 +969,13 @@ pub fn pdf_bytes(doc: &Document, opts: &PdfOptions) -> Result<Vec<u8>, String> {
                 }
                 let rx = LEFT_MARGIN_MM + r.indent as f32 * CHAR_W_MM;
                 layer.use_text(&r.text, 12.0, Mm(rx), Mm(y), &courier);
+            }
+            if line_ids(line).any(|id| opts.changed.contains(&id)) {
+                if inked.is_some() {
+                    layer.set_fill_color(colour(None));
+                    inked = None;
+                }
+                layer.use_text("*", 12.0, Mm(right_edge + 12.0), Mm(y), &courier);
             }
             if line.text.trim().is_empty() {
                 continue;
