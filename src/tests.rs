@@ -1359,3 +1359,32 @@ fn a_revision_marks_only_what_moved() {
     let moved = now.blocks[3].id;
     assert_eq!(crate::revision::changed(&base, &now), [moved].into_iter().collect(), "a new element type counts");
 }
+
+#[test]
+fn searching_inside_a_script_reads_lines_and_notes() {
+    let mut d = take();
+    d.blocks[3].remark = "Make the stop land harder".into();
+    d.blocks[1].text = format!("{} Rain on the roof. {}", "word ".repeat(30), "word ".repeat(30));
+    let text = storage::to_markdown(&d);
+
+    let (hits, total) = storage::find_in(&text, "STOP", 5);
+    assert_eq!(total, 2, "the line and its note");
+    assert_eq!((hits[0].block, hits[0].note), (3, false));
+    assert_eq!((hits[1].block, hits[1].note), (3, true));
+    let first: String = hits[0].line.chars().skip(hits[0].start).take(hits[0].len).collect();
+    assert_eq!(first, "stop");
+
+    let (hits, _) = storage::find_in(&text, "rain  on the", 5);
+    assert_eq!(hits.len(), 1);
+    let long = &hits[0];
+    assert_eq!(long.block, 1);
+    assert!(long.line.starts_with('…') && long.line.ends_with('…'), "{}", long.line);
+    let found: String = long.line.chars().skip(long.start).take(long.len).collect();
+    assert_eq!(found, "Rain on the");
+
+    let (hits, total) = storage::find_in(&text, "o", 1);
+    assert_eq!(hits.len(), 1);
+    assert!(total > 1);
+    assert!(storage::find_in(&text, "", 5).0.is_empty());
+    assert!(storage::find_in(&text, "nowhere at all", 5).0.is_empty());
+}

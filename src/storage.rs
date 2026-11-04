@@ -496,6 +496,96 @@ pub fn delete(path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
 
+// search inside here---
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hit {
+    pub block: usize,
+    pub line: String,
+    pub start: usize,
+    pub len: usize,
+    pub note: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Found {
+    pub path: PathBuf,
+    pub title: String,
+    pub hits: Vec<Hit>,
+    pub total: usize,
+}
+
+fn fold(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
+fn find_chars(hay: &[char], needle: &[char]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len()).find(|&i| hay[i..i + needle.len()].iter().zip(needle).all(|(a, b)| fold(*a) == *b))
+}
+
+fn excerpt(chars: &[char], at: usize, len: usize) -> (String, usize) {
+    const LEAD: usize = 28;
+    const ROOM: usize = 110;
+    let from = at.saturating_sub(LEAD);
+    let to = (from + ROOM).max(at + len).min(chars.len());
+    let mut out: String = chars[from..to].iter().collect();
+    let mut start = at - from;
+    if from > 0 {
+        out.insert(0, '…');
+        start += 1;
+    }
+    if to < chars.len() {
+        out.push('…');
+    }
+    (out, start)
+}
+
+fn flat(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub fn find_in(text: &str, needle: &str, keep: usize) -> (Vec<Hit>, usize) {
+    let needle: Vec<char> = flat(needle).chars().map(fold).collect();
+    let doc = from_markdown(text);
+    let mut hits = Vec::new();
+    let mut total = 0;
+    for (k, b) in doc.blocks.iter().enumerate() {
+        for (body, note) in [(&b.text, false), (&b.remark, true)] {
+            let hay: Vec<char> = flat(body).chars().collect();
+            if let Some(at) = find_chars(&hay, &needle) {
+                total += 1;
+                if hits.len() < keep {
+                    let (line, start) = excerpt(&hay, at, needle.len());
+                    hits.push(Hit { block: k, line, start, len: needle.len(), note });
+                }
+            }
+        }
+    }
+    (hits, total)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn search_scripts(needle: &str, keep: usize) -> Vec<Found> {
+    let mut out = Vec::new();
+    if needle.trim().chars().count() < 2 {
+        return out;
+    }
+    for e in list_scripts() {
+        let Ok(text) = fs::read_to_string(&e.path) else {
+            continue;
+        };
+        let (hits, total) = find_in(&text, needle, keep);
+        if total > 0 {
+            out.push(Found { path: e.path, title: e.title, hits, total });
+        }
+    }
+    out.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())));
+    out
+}
+
 // snapshots here---
 
 #[cfg(not(target_arch = "wasm32"))]

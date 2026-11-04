@@ -7,7 +7,7 @@ use super::{new_script_button, relative_time, youtrack_button, App, Popover};
 use crate::anim;
 use crate::icons::{self, Icon};
 use crate::people;
-use crate::storage::Entry;
+use crate::storage::{Entry, Found};
 use crate::theme::{self, pal};
 use crate::ui;
 
@@ -135,7 +135,7 @@ impl App {
                 .hint_text(if team.is_some() {
                     "Search the team's scripts  ·  Ctrl+F"
                 } else {
-                    "Search your scripts  ·  Ctrl+F"
+                    "Search titles and every line  ·  Ctrl+F"
                 })
                 .desired_width(w.min(380.0))
                 .margin(egui::Margin::symmetric(12.0, 8.0)),
@@ -144,6 +144,7 @@ impl App {
             search.request_focus();
             self.focus_home_search = false;
         }
+        let enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         ui.add_space(16.0);
 
         let needle = self.home_search.trim().to_lowercase();
@@ -224,7 +225,20 @@ impl App {
             }
             ui.add_space(10.0);
         }
-        if order.is_empty() {
+        let found = self.found_for(&needle);
+        let mut jump = None;
+        self.hit_rows.clear();
+        if !found.is_empty() {
+            jump = self.found_section(ui, &found, w);
+        }
+        if enter && open.is_none() && jump.is_none() && !needle.is_empty() {
+            match (order.first(), found.first().and_then(|f| f.hits.first().map(|h| (f.path.clone(), h.block)))) {
+                (Some(path), _) => open = Some(path.clone()),
+                (None, Some(hit)) => jump = Some(hit),
+                (None, None) => {}
+            }
+        }
+        if order.is_empty() && found.is_empty() {
             ui.label(
                 egui::RichText::new("Nothing matches.")
                     .font(theme::font(theme::T_SM))
@@ -243,7 +257,82 @@ impl App {
         }
         if let Some(path) = open {
             self.open_from_home(path);
+        } else if let Some((path, k)) = jump {
+            self.pending_jump = Some((path.clone(), k));
+            self.open_from_home(path);
         }
+    }
+
+    fn found_for(&mut self, needle: &str) -> Vec<Found> {
+        if needle.chars().count() < 2 {
+            return Vec::new();
+        }
+        if self.home_hits.as_ref().map(|(n, _)| n.as_str()) != Some(needle) {
+            let found = self.store.search(needle).unwrap_or_default();
+            self.home_hits = Some((needle.to_string(), found));
+        }
+        self.home_hits.as_ref().map(|(_, f)| f.clone()).unwrap_or_default()
+    }
+
+    fn found_section(&mut self, ui: &mut egui::Ui, found: &[Found], w: f32) -> Option<(PathBuf, usize)> {
+        let p = pal();
+        let mut picked = None;
+        let all: usize = found.iter().map(|f| f.total).sum();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            icons::show(ui, Icon::Search, 12.0, p.text_faint);
+            ui::hud(ui, &format!("In the pages / {all:02}"), Some(p.text_dim));
+        });
+        ui.add_space(8.0);
+        let font = theme::font_page(theme::T_SM);
+        for f in found {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.label(egui::RichText::new(&f.title).font(theme::font_med(theme::T_SM)).color(p.text));
+                let more = if f.total == 1 { "1 match".to_string() } else { format!("{} matches", f.total) };
+                ui.label(egui::RichText::new(more).font(theme::font_mono(theme::T_CAP)).color(p.text_faint));
+            });
+            ui.add_space(4.0);
+            for h in &f.hits {
+                let chars: Vec<char> = h.line.chars().collect();
+                let cut = |a: usize, b: usize| chars[a.min(chars.len())..b.min(chars.len())].iter().collect::<String>();
+                let mut job = egui::text::LayoutJob::default();
+                let plain = egui::TextFormat { font_id: font.clone(), color: p.text_dim, ..Default::default() };
+                if h.note {
+                    job.append("NOTE  ", 0.0, egui::TextFormat { font_id: theme::font_mono(theme::T_CAP), color: p.primary_light, ..Default::default() });
+                }
+                job.append(&cut(0, h.start), 0.0, plain.clone());
+                job.append(
+                    &cut(h.start, h.start + h.len),
+                    0.0,
+                    egui::TextFormat { font_id: font.clone(), color: p.text, background: theme::wash(p.primary, 90), ..Default::default() },
+                );
+                job.append(&cut(h.start + h.len, chars.len()), 0.0, plain);
+                job.wrap.max_width = w - 28.0;
+                job.wrap.max_rows = 1;
+                let galley = ui.painter().layout_job(job);
+                let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, galley.rect.height() + 14.0), Sense::click());
+                let hot = anim::ease(ui.ctx(), resp.id, resp.hovered(), anim::HOVER);
+                theme::hover_surface(ui.painter(), rect, theme::R_SM, p.primary, hot, false);
+                ui.painter().galley(Pos2::new(rect.left() + 14.0, rect.center().y - galley.rect.height() * 0.5), galley, p.text);
+                self.hit_rows.push((f.path.clone(), h.block, rect));
+                if resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    picked = Some((f.path.clone(), h.block));
+                }
+            }
+            if f.total > f.hits.len() {
+                ui.label(
+                    egui::RichText::new(format!("and {} more in this script", f.total - f.hits.len()))
+                        .font(theme::font(theme::T_CAP))
+                        .color(p.text_faint),
+                );
+            }
+            ui.add_space(12.0);
+        }
+        picked
     }
 
     pub(super) fn open_from_home(&mut self, path: PathBuf) {
