@@ -640,6 +640,9 @@ impl App {
                     self.deck.warn("That is not a web address", "Set the YouTrack link in Settings.");
                 }
             }
+            if ui::quiet_button(ui, "Take the tour", Some(Icon::Sparkle)) {
+                self.start_tour(super::onboarding::Kind::Full);
+            }
             ui.add_space(10.0);
             let (r, _) = ui.allocate_exact_size(Vec2::new(260.0, 14.0), Sense::hover());
             if ui::maker_line(ui, r, true) {
