@@ -132,6 +132,9 @@ pub struct App {
     home_sel: usize,
     home_order: Vec<PathBuf>,
     home_keyed: bool,
+    home_hits: Option<(String, Vec<storage::Found>)>,
+    hit_rows: Vec<(PathBuf, usize, Rect)>,
+    pending_jump: Option<(PathBuf, usize)>,
     account_button_rect: Rect,
     team_add_id: String,
     team_add_role: crate::backend::Role,
@@ -261,6 +264,9 @@ impl App {
             home_sel: 0,
             home_order: Vec::new(),
             home_keyed: false,
+            home_hits: None,
+            hit_rows: Vec::new(),
+            pending_jump: None,
             account_button_rect: Rect::NOTHING,
             team_add_id: String::new(),
             team_add_role: crate::backend::Role::Editor,
@@ -483,6 +489,14 @@ impl App {
         if self.mode == Mode::Write {
             self.ed.pending_focus = self.doc.blocks.first().map(|b| (b.id, Caret::End));
         }
+        if let Some((want, k)) = self.pending_jump.take() {
+            if self.path.as_ref() == Some(&want) {
+                if let Some(id) = self.doc.blocks.get(k).map(|b| b.id) {
+                    self.ed.focus_block = Some(id);
+                    self.ed.jump_to(id);
+                }
+            }
+        }
         self.refresh_layout(true);
     }
 
@@ -588,6 +602,7 @@ impl App {
 
     fn refresh_entries(&mut self) {
         self.entries = self.store.list();
+        self.home_hits = None;
     }
 
     fn watch_library(&mut self) {
@@ -3989,6 +4004,12 @@ impl App {
     pub fn debug_open_popover_trash(&mut self) {
         self.popover = Some(Popover::Trash);
         self.popover_frame = self.frame_no;
+    }
+    pub fn debug_hit_rows(&self) -> Vec<(PathBuf, usize, Rect)> {
+        self.hit_rows.clone()
+    }
+    pub fn debug_home_search(&mut self, needle: &str) {
+        self.home_search = needle.to_string();
     }
     pub fn debug_home_order(&self) -> Vec<PathBuf> {
         self.home_order.clone()

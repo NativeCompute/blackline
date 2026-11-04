@@ -206,6 +206,9 @@ pub trait Store {
     fn delete(&mut self, key: &Path) -> Result<(), String>;
     fn set_starred(&mut self, key: &Path, on: bool) -> Result<(), String>;
     fn request_edit(&mut self, _key: &Path) {}
+    fn search(&mut self, _needle: &str) -> Option<Vec<crate::storage::Found>> {
+        None
+    }
 
     // snapshots history here---
 
@@ -305,6 +308,10 @@ mod local {
                 }
                 _ => true,
             }
+        }
+
+        fn search(&mut self, needle: &str) -> Option<Vec<storage::Found>> {
+            Some(storage::search_scripts(needle, 3))
         }
 
         fn load(&mut self, key: &Path) -> Load {

@@ -1016,3 +1016,25 @@ fn a_revision_lists_each_changed_line_and_ends_clean() {
     assert!(saved.contains("revision: blue"), "{saved}");
     assert!(saved.contains("revision_base: "), "{saved}");
 }
+
+#[test]
+fn home_search_finds_a_line_inside_a_script_and_opens_it_there() {
+    let mut h = Harness::new();
+    h.load(three_scenes());
+    let three = h.app.path().unwrap();
+    let cole = h.app.doc().blocks[1].id;
+    h.app.debug_go_home();
+    h.frames(2);
+    h.app.debug_home_search("detective  cole");
+    h.frames(3);
+    let rows = h.app.debug_hit_rows();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!((rows[0].0.clone(), rows[0].1), (three.clone(), 1));
+    assert!(h.app.debug_home_order().is_empty(), "no title matches, only the line");
+    let row = rows[0].2;
+    h.click(row.center());
+    h.frames(3);
+    assert!(!h.app.is_home());
+    assert_eq!(h.app.path(), Some(three));
+    assert_eq!(h.app.focus_block(), Some(cole));
+}
