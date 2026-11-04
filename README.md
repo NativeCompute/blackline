@@ -17,11 +17,61 @@ and one signal blue; Anybody for display type and JetBrains Mono for HUD
 readouts; hairline borders, square corners and no glass or glows. There is one
 look, in a dark cast and a light one.
 
-![Writing: acts as chapter headings, the scene navigator on the right](docs/blackline-write.png)
+![Writing: notes on the left, dual dialogue side by side, the scene navigator on the right](docs/blackline-write.png)
 
 ![Home: your library as cards](docs/blackline-home.png)
 
-![Cards: the script as a wall of index cards](docs/blackline-cards.png)
+![Cards: storylines, the timeline with beat guides, and the scenes as index cards](docs/blackline-cards.png)
+
+---
+
+## New in 2.1: Blue Pages
+
+Named after the first round of production changes, which go out on blue paper.
+
+- **Dual dialogue.** Two characters talking at once. Put the cursor in the
+  second speech and press `Ctrl+D`; the pair sits side by side in the editor,
+  in Reading mode and in print, and is never split across a page. Fountain
+  (`^`) and Final Draft carry it both ways.
+- **Script notes.** `Ctrl+M`, or right-click a line, to leave yourself a note.
+  A marker sits in the margin, the note itself shows beside the page when the
+  window is wide enough, and the panel on the left lists every note with its
+  page and scene. Notes only print when you ask, as endnotes.
+- **Revision mode.** Start a revision from the *Changes* tab. Every changed
+  line gets an asterisk in the margin, changed pages carry a header such as
+  `Blue Rev. 11/04/26`, and each round takes the next colour: blue, pink,
+  yellow, green, goldenrod, buff, salmon, cherry. **Lock pages** keeps every
+  page on its number; new material goes onto A-pages (`12A`, `12B`). Export can
+  print just the changed pages, on tinted paper if you like.
+- **Reports.** `Ctrl+Shift+R`: characters (cues, lines, words, share of the
+  dialogue, first appearance), scenes, locations and day and night, all
+  measured on the printed layout, each one copyable as text.
+- **Find across all scripts.** Home's search looks inside every script, not
+  just titles; a click opens the script on that line. `Ctrl+Shift+F` gets
+  there from anywhere.
+- **Beat tools in Cards.** Name the card colours as storylines and filter the
+  board by them. A timeline shows the whole script to scale, coloured by
+  storyline, with act breaks and guides at the usual turning points.
+- **A gentler first run.** A short tour for new people, and a *what's new* for
+  people updating, shown once. *Take the tour* on Home brings it back.
+- **Imports that say what changed.** Anything a Fountain or Final Draft file
+  had that Blackline could not keep exactly is listed, with a link to where it
+  happened.
+- **More room to write.** The script list has left the writing view; the
+  *Library* button at the left of the ribbon goes back to it.
+- **Update status** on the splash, and a notice on Home when a new version is
+  out, with a *Download* button.
+
+Every script from an earlier Blackline opens and saves exactly as before. The
+new markers are only written into a script once you use the feature.
+
+![Reports: characters, scenes, locations, day and night](docs/blackline-reports.png)
+
+![Revision mode: asterisks, the revision header and A-pages](docs/blackline-revision.png)
+
+![Find across all scripts from Home](docs/blackline-find.png)
+
+![The tour](docs/blackline-tour.png)
 
 ---
 
@@ -95,7 +145,7 @@ the three window buttons along the top, the whole strip draggable, a
 double-click to maximise, and invisible grips down every edge for resizing.
 
 The window is void black with the website's faint column guides drawn across
-it. Anything you *work in* — the library, the page, the scene navigator — is a
+it. Anything you *work in* — the notes panel, the page, the scene navigator — is a
 panel on it: opaque, with a 1px hairline and 2px corners. The Write | Cards |
 Read switch is the site's tab strip; buttons fill from the left when you reach
 for them; counts, pages and timings are mono HUD readouts.
@@ -104,7 +154,8 @@ for them; counts, pages and timings are mono HUD readouts.
 
 ## Three views
 
-The switch at the left of the ribbon (`Ctrl+G` steps through them):
+The switch near the left of the ribbon (`Ctrl+G` steps through them). Left of
+it, **Library** goes back to Home and all your scripts.
 
 **Write** — the script, one typed block per paragraph, at industry indents in
 Courier Prime. The block you are in gets a wash of the accent; every scene
@@ -127,8 +178,12 @@ mode too, or stay in the editor.
 **Cards** — every scene as an index card: its number, heading, where it falls
 and how long it runs (in eighths of a page), who speaks in it, and a synopsis
 you write straight onto the card. Drag a card by its head to move the whole
-scene; right-click for a card colour or to delete the scene (it asks first,
-and `Ctrl+Z` brings it back).
+scene; right-click for a storyline colour or to delete the scene (it asks first,
+and `Ctrl+Z` brings it back). Above the cards, the storylines (name them with
+*Name*, click one to show only its scenes) and a timeline of the whole script
+to scale, with beat guides at 10, 25, 50, 75 and 90 percent of the page count
+(*Beats* in the ribbon turns them off). Click a scene on the timeline to go to
+its card.
 
 **Read** — Reading mode: the script exactly as it will print, one page at a
 time, typeset, drawn from the same layout pass the PDF is written from — no
@@ -136,6 +191,9 @@ bands, tags or stars. The page is sized so all of it is in view, and opens on
 the page you were writing. Turn it with `←` `→`, `Page Up` `Page Down`,
 `Home` `End`, the scroll wheel, or the control under the page. Click any
 line to go and write it.
+
+On the left, **Notes and changes** (`Ctrl+B`): every note in script order, and
+every line changed in the revision you are running. Click one to go to it.
 
 On the right, **Details** (`Ctrl+I`, or the ⓘ in the ribbon) is the script's
 title page — title, author, draft, contact — and what the script adds up to:
@@ -164,15 +222,18 @@ and the type decides the indent, the width, and whether it is forced to caps.
 | `↑` / `↓` at the edges of a block | Move between blocks |
 | `Alt+↑` / `Alt+↓` | Move the whole block up or down |
 | `Ctrl+Enter` | A new scene straight after the one you are in |
+| `Ctrl+D` | Dual dialogue: pair this speech with the one before it, or unpair it |
+| `Ctrl+M` or `Ctrl+K` | Add a note to this line, or edit it |
 | `Ctrl+S` | Save now (also renames the file to match the title) |
 | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` | Undo / redo, document-wide |
 | `Ctrl+N` | New script — its title is selected, ready to type over |
 | `Ctrl+E` | Quick Export: PDF, then open it (or show it, or nothing — Settings) |
 | `Ctrl+Shift+E` | Export PDF…: choose pages, title page, scene numbers, character colours |
 | `Ctrl+F` / `Ctrl+H` | Find and replace in the script |
-| `Ctrl+Shift+F` | Filter the library |
+| `Ctrl+Shift+F` | Search every script, from Home |
+| `Ctrl+Shift+R` | Reports |
 | `Ctrl+G` | Write → Cards → Read |
-| `Ctrl+B` | Show / hide the library |
+| `Ctrl+B` | Show / hide Notes and Changes |
 | `Ctrl+I` | Show / hide the script's details |
 | `Ctrl+Shift+I` | Show / hide the scene navigator |
 | `Ctrl+.` | Focus: hide both side islands and dim everything outside this scene |
@@ -265,6 +326,18 @@ heading as an HTML comment, which markdown viewers hide. A starred script has
 `starred: yes` in its front matter. Both are only written when used, so a
 script without them is byte-for-byte what the first Blackline wrote.
 
+Blue Pages adds a few more, on the same terms:
+
+| Feature | In the file |
+|---|---|
+| Dual dialogue | a caret in the cue: `**JONAS ^**` |
+| A note | Fountain's own note syntax at the end of the line: `> Fine. [[softer]]` |
+| Named storylines | front matter `storylines: 0=Maria; 1=The heist` |
+| A revision | front matter `revision: blue`, `revision_date:`, `revision_base:` (the snapshot it started from) and `locked: yes` |
+
+Changed lines are worked out by comparing the script with the snapshot its
+revision started from, so the text itself carries no revision marks.
+
 Drop a hand-written file into `scripts/` following those rules and it shows up
 in the library on its own. Anything unrecognised becomes action rather than
 being dropped.
@@ -292,7 +365,10 @@ whole script.
 
 **Import** — the arrow beside *New script*, the `⋯` menu, dropping a file onto
 the window, or `blackline some-file.fountain` — reads Fountain, Final Draft
-and Blackline markdown into a new script. The file picker is Windows' own on
+and Blackline markdown into a new script. When the file had anything Blackline
+could not keep exactly (scene numbers, deeper sections, page breaks, centred
+text, lyrics, title page fields, Final Draft paragraph types or script notes),
+a window lists each kind with a count and a *Show me* link to where it was. The file picker is Windows' own on
 Windows; on Linux, KDE's dialog (`kdialog`) where there is one, GNOME's
 (`zenity`) otherwise.
 
@@ -336,7 +412,7 @@ their hairlines, and motion stays within the site's 100–300 ms.
 [YouTrack](https://www.jetbrains.com/youtrack/) is JetBrains' issue tracker
 and project management tool. If your production keeps its notes and tasks
 there, paste your workspace's link into Settings → YouTrack and a **View on
-YouTrack** button appears at the foot of the library. The link is empty until
+YouTrack** button appears at the foot of Home and of the notes panel. The link is empty until
 you set one, and the button stays hidden until then.
 
 ---
@@ -348,7 +424,9 @@ on [GitHub](https://github.com/NativeCompute/blackline/releases). It sends one
 request to GitHub's public API and nothing else — no account, no identifier,
 just the app's version in the request header. When there is a newer version it
 says so and links to the release page; nothing is downloaded or installed by
-itself. Turn it off in Settings → About.
+itself. The splash card says how the check went, and Home shows a notice with
+a *Download* button while a newer version is out; dismiss it and that version
+does not come up again. Turn the check off in Settings → About.
 
 ---
 
@@ -407,7 +485,7 @@ follows the [code of conduct](CODE_OF_CONDUCT.md).
 ## Development
 
 ```bash
-cargo test          # 106 tests: behaviour, files, formats, headless UI
+cargo test          # 141 tests: behaviour, files, formats, headless UI
 cargo build --release
 ./target/release/blackline --emit-icon icon.svg   # the mark, as the app draws it
 ./target/release/blackline --emit-ico packaging/blackline.ico   # the Windows icon
@@ -424,12 +502,17 @@ the dark and light casts are all exercised for real.
 | `src/backend.rs` | The `Store` trait the app reads and writes through; `LocalBackend` is the library folder |
 | `src/model.rs` | Elements, indents, blocks, scenes, cast, word wrap, paste guessing, SmartType |
 | `src/storage.rs` | The library folder, markdown read/write, snapshots, settings, import |
-| `src/export.rs` | Line composition, pagination, page map, scene lengths, PDF/FDX/Fountain/text |
+| `src/export.rs` | Line composition, pagination (and locked pages with A-pages), page map, scene lengths, PDF/FDX/Fountain/text |
 | `src/fountain.rs` | Fountain and Final Draft readers |
 | `src/editor.rs` | The page: block rendering and every structural keystroke |
 | `src/cards.rs` / `src/pages.rs` | Cards, and Reading mode |
-| `src/app.rs` | Shell — ribbon, library, navigator, popovers, autosave, undo |
-| `src/app/home.rs` | Home: the script picker the app opens on |
+| `src/app.rs` | Shell — ribbon, navigator, popovers, autosave, undo |
+| `src/app/home.rs` | Home: the script picker the app opens on, search inside every script, the update notice |
+| `src/app/notes.rs` | The note window, the Notes and Changes panel, starting and ending a revision |
+| `src/app/reports.rs` `src/report.rs` | The Reports window, and the figures behind it |
+| `src/app/imported.rs` | The window listing what an import could not keep |
+| `src/app/onboarding.rs` | The tour and *what's new* |
+| `src/revision.rs` | Revision colours, the diff against the starting snapshot |
 | `src/app/team.rs` `src/people.rs` | Screens for a shared library: read-only scripts, history, members, avatars. Not shown for a library on disk |
 | `src/app/voices.rs` | Choosing character colours: Random or Custom, the colour picker |
 | `src/keys.rs` `src/app/keyboard.rs` | Every shortcut and its default chords, the ones you choose instead, and Settings → Keyboard |

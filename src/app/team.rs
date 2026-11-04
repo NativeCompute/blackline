@@ -580,19 +580,6 @@ impl App {
         }
     }
 
-    pub(super) fn team_row_line(&self, e: &crate::storage::Entry, pages: usize) -> Option<(String, bool)> {
-        self.store.team()?;
-        if let Some(who) = &e.editing {
-            return Some((format!("{} is editing", who.first_name()), true));
-        }
-        let me = self.me();
-        let when = relative_time(e.modified);
-        Some(match &e.edited_by {
-            Some(by) => (format!("{pages} pg · {}", people::by_line(by, me.as_ref(), &when)), false),
-            None => (format!("{pages} pg · {when}"), false),
-        })
-    }
-
     pub(super) fn keep_read_only(&mut self) {
         if !self.access.can_edit() {
             if self.mode != Mode::Read {

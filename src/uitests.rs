@@ -26,7 +26,7 @@ fn sandbox(settings: &str) -> std::sync::MutexGuard<'static, ()> {
     std::env::set_var("XDG_DATA_HOME", &dir);
     let _ = std::fs::write(
         dir.join("blackline/settings.conf"),
-        format!("splash = no\nanimations = no\nautosave_ms = 150\n{settings}"),
+        format!("splash = no\nanimations = no\nautosave_ms = 150\nonboarded = blue-pages\n{settings}"),
     );
     guard
 }
@@ -242,13 +242,31 @@ fn deleting_a_script_from_the_menu_asks_first() {
 }
 
 #[test]
-fn a_script_is_opened_from_its_row() {
+fn the_library_button_goes_home_and_a_card_opens_the_script() {
     let mut h = Harness::new();
     let starter = h.app.path().unwrap();
     h.load(three_scenes());
-    let row = h.app.debug_row_rect(&starter).expect("the starter's row");
-    h.click(row.left_center() + vec2(30.0, 0.0));
+    let other = h.app.path().unwrap();
+    let button = h.app.debug_library_button();
+    assert!(button.width() > 60.0, "a labelled button, not just an icon: {button:?}");
+    h.click(button.center());
+    h.frames(2);
+    assert!(h.app.is_home());
+    h.app.debug_open_from_home(starter.clone());
+    h.frames(2);
+    assert!(!h.app.is_home());
     assert_eq!(h.app.path(), Some(starter));
+    assert_ne!(h.app.path(), Some(other));
+}
+
+#[test]
+fn ctrl_shift_f_searches_every_script_from_home() {
+    let mut h = Harness::new();
+    h.load(three_scenes());
+    h.press(Key::F, Modifiers::COMMAND | Modifiers::SHIFT);
+    h.frames(3);
+    assert!(h.app.is_home());
+    assert!(h.ctx.memory(|m| m.has_focus(egui::Id::new("ns-home-search"))));
 }
 
 // writing here---
@@ -606,7 +624,7 @@ fn nothing_is_drawn_outside_the_block_being_typed_into() {
 }
 
 #[test]
-fn the_library_foot_ends_level_with_the_other_islands() {
+fn the_left_panel_foot_ends_level_with_the_other_islands() {
     let mut h = Harness::with(1320.0, 900.0, "show_details = yes\n");
     let foot = h.app.debug_foot_rect();
     let page = h.app.debug_page_rect();
@@ -875,4 +893,286 @@ fn the_desktop_chooses_character_colours_as_the_web_does() {
         h.frames(3);
         assert_eq!(h.app.debug_settings_tab(), tab);
     }
+}
+
+// dual dialogue here---
+
+fn crossfire() -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.meta.title = "Crossfire".into();
+    d.push(Element::SceneHeading, "INT. KITCHEN - NIGHT");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "I said stop.");
+    d.push(Element::Character, "JONAS");
+    d.push(Element::Dialogue, "I'm not stopping!");
+    d.push(Element::Action, "Silence.");
+    d.reseed_ids();
+    d
+}
+
+#[test]
+fn ctrl_d_puts_two_speeches_side_by_side_and_back() {
+    let mut h = Harness::new();
+    h.load(crossfire());
+    let maria = h.app.doc().blocks[1].id;
+    let jonas = h.app.doc().blocks[3].id;
+    let before = (h.block_rect(maria).unwrap(), h.block_rect(jonas).unwrap());
+    assert!(before.1.top() > before.0.bottom(), "one after the other to begin with");
+    h.focus(jonas);
+    h.press(Key::D, Modifiers::COMMAND);
+    h.frames(3);
+    assert!(h.app.doc().blocks[3].dual);
+    let (m, j) = (h.block_rect(maria).unwrap(), h.block_rect(jonas).unwrap());
+    assert!((m.top() - j.top()).abs() < 2.0, "the cues share a row: {m:?} {j:?}");
+    assert!(j.left() > m.right(), "JONAS sits to the right of MARIA");
+    let silence = h.block_rect(h.app.doc().blocks[5].id).unwrap();
+    assert!(silence.top() > j.bottom(), "what follows starts below the pair");
+    h.idle();
+    assert!(h.saved_text().contains("**JONAS ^**"));
+    h.focus(maria);
+    h.press(Key::D, Modifiers::COMMAND);
+    h.frames(3);
+    assert!(!h.app.doc().blocks[3].dual);
+}
+
+#[test]
+fn enter_at_the_end_of_the_left_speech_moves_to_the_right_one() {
+    let mut h = Harness::new();
+    let mut d = crossfire();
+    d.blocks[3].dual = true;
+    h.load(d);
+    let left_line = h.app.doc().blocks[2].id;
+    h.focus(left_line);
+    h.press(Key::End, Modifiers::NONE);
+    h.press(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    assert_eq!(h.app.doc().blocks.len(), 6, "no block was added");
+    assert_eq!(h.app.focus_block(), Some(h.app.doc().blocks[3].id));
+}
+
+// script notes here---
+
+#[test]
+fn ctrl_m_adds_a_note_that_lands_in_the_file() {
+    let mut h = Harness::new();
+    h.load(crossfire());
+    let line = h.app.doc().blocks[2].id;
+    h.focus(line);
+    h.press(Key::M, Modifiers::COMMAND);
+    h.frames(3);
+    assert_eq!(h.app.debug_note_open(), Some(line));
+    h.type_text("say it softer");
+    h.press(Key::Enter, Modifiers::COMMAND);
+    h.frames(2);
+    assert_eq!(h.app.debug_note_open(), None);
+    assert_eq!(h.app.doc().blocks[2].remark, "say it softer");
+    h.idle();
+    assert!(h.saved_text().contains("> I said stop. [[say it softer]]"), "{}", h.saved_text());
+    h.focus(line);
+    h.press(Key::M, Modifiers::COMMAND);
+    h.frames(3);
+    h.press(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert_eq!(h.app.doc().blocks[2].remark, "say it softer", "Esc keeps the note as it was");
+}
+
+#[test]
+fn a_note_in_the_left_panel_jumps_to_its_line() {
+    let mut h = Harness::with(1320.0, 900.0, "show_library = yes\n");
+    let mut doc = crossfire();
+    doc.blocks[2].remark = "softer".into();
+    doc.blocks[5].remark = "hold the silence".into();
+    h.load(doc);
+    h.frames(3);
+    let noted: Vec<u64> = h.app.doc().blocks.iter().filter(|b| !b.remark.is_empty()).map(|b| b.id).collect();
+    let rows = h.app.debug_left_rows();
+    assert_eq!(rows.iter().map(|r| r.0).collect::<Vec<_>>(), noted, "every note, in script order");
+    let (id, rect) = *rows.last().unwrap();
+    h.click(rect.center());
+    h.frames(3);
+    assert_eq!(h.app.focus_block(), Some(id));
+}
+
+#[test]
+fn a_revision_lists_each_changed_line_and_ends_clean() {
+    let mut h = Harness::with(1320.0, 900.0, "show_library = yes\n");
+    h.load(crossfire());
+    h.app.debug_left_tab(1);
+    h.app.debug_start_revision();
+    h.frames(2);
+    assert!(h.app.doc().meta.revising());
+    assert_eq!(h.app.doc().meta.revision, Some(0));
+    assert!(h.app.debug_changes().is_empty(), "nothing changed yet");
+    let line = h.app.doc().blocks[2].id;
+    h.focus(line);
+    h.type_text(" Now.");
+    h.frames(2);
+    assert_eq!(h.app.debug_changes(), vec![line]);
+    h.frames(2);
+    assert_eq!(h.app.debug_left_rows().iter().map(|r| r.0).collect::<Vec<_>>(), vec![line]);
+    h.idle();
+    let saved = h.saved_text();
+    assert!(saved.contains("revision: blue"), "{saved}");
+    assert!(saved.contains("revision_base: "), "{saved}");
+}
+
+#[test]
+fn home_search_finds_a_line_inside_a_script_and_opens_it_there() {
+    let mut h = Harness::new();
+    h.load(three_scenes());
+    let three = h.app.path().unwrap();
+    let cole = h.app.doc().blocks[1].id;
+    h.app.debug_go_home();
+    h.frames(2);
+    h.app.debug_home_search("detective  cole");
+    h.frames(3);
+    let rows = h.app.debug_hit_rows();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!((rows[0].0.clone(), rows[0].1), (three.clone(), 1));
+    assert!(h.app.debug_home_order().is_empty(), "no title matches, only the line");
+    let row = rows[0].2;
+    h.click(row.center());
+    h.frames(3);
+    assert!(!h.app.is_home());
+    assert_eq!(h.app.path(), Some(three));
+    assert_eq!(h.app.focus_block(), Some(cole));
+}
+
+#[test]
+fn ctrl_shift_r_opens_the_reports_and_a_scene_row_jumps_there() {
+    let mut h = Harness::with(1320.0, 900.0, "");
+    h.load(three_scenes());
+    h.press(Key::R, Modifiers::COMMAND | Modifiers::SHIFT);
+    h.frames(3);
+    assert!(h.app.debug_popover_open());
+    assert_eq!(h.app.debug_report().scenes.len(), 3);
+    assert_eq!(h.app.debug_report().speakers[0].name, "DETECTIVE COLE");
+    h.press(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert!(!h.app.debug_popover_open());
+
+    h.press(Key::R, Modifiers::COMMAND | Modifiers::SHIFT);
+    h.app.debug_report_tab(1);
+    h.frames(3);
+    let rows = h.app.debug_report_rows();
+    assert_eq!(rows.len(), 3);
+    let (third, rect) = rows[2];
+    h.click(rect.center());
+    h.frames(3);
+    assert!(!h.app.debug_popover_open(), "going to a scene closes the window");
+    assert_eq!(h.app.focus_block(), Some(third));
+}
+
+fn storylines() -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.meta.title = "Storylines".into();
+    d.meta.set_storyline(1, "The heist");
+    for n in 0..24 {
+        d.push(Element::SceneHeading, &format!("INT. ROOM {n} - DAY"));
+        d.push(Element::Action, "Somebody waits by the window and counts the cars going past, slowly.");
+    }
+    d.reseed_ids();
+    let heads: Vec<usize> = (0..d.blocks.len()).filter(|i| d.blocks[*i].element == Element::SceneHeading).collect();
+    for (k, i) in heads.into_iter().enumerate() {
+        d.blocks[i].tint = Some(k % 3);
+    }
+    d
+}
+
+#[test]
+fn a_storyline_filters_the_cards_and_the_timeline_scrolls_to_a_card() {
+    let mut h = Harness::with(1320.0, 900.0, "");
+    h.load(storylines());
+    h.app.set_mode(Mode::Cards);
+    h.frames(3);
+    let chips = h.app.debug_cards().chips.clone();
+    assert_eq!(chips.iter().map(|c| c.0).collect::<Vec<_>>(), vec![0, 1, 2]);
+    h.click(chips[1].1.center());
+    h.frames(2);
+    assert_eq!(h.app.debug_cards().only, vec![1]);
+    h.click(chips[1].1.center());
+    h.frames(2);
+    assert!(h.app.debug_cards().only.is_empty());
+
+    let segments = h.app.debug_cards().segments.clone();
+    assert_eq!(segments.len(), 24);
+    assert!(segments.windows(2).all(|w| w[0].1.right() <= w[1].1.left() + 0.5), "in script order, left to right");
+    let last = h.app.debug_card_rect(23).unwrap();
+    assert!(last.top() > 900.0, "the last card starts out of sight");
+    h.click(segments[23].1.center());
+    h.frames(40);
+    let last = h.app.debug_card_rect(23).unwrap();
+    assert!(last.top() > 0.0 && last.bottom() < 900.0, "scrolled into view: {last:?}");
+}
+
+#[test]
+fn an_import_with_problems_opens_a_report_that_points_at_them() {
+    let mut h = Harness::with(1320.0, 900.0, "");
+    let dir = std::env::temp_dir().join(format!("ns-import-report-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("odd.fountain");
+    std::fs::write(&f, "INT. ROOM - DAY\n\nShe waits.\n\n~A song she knows\n\n===\n\nShe leaves.\n").unwrap();
+    h.app.debug_import(&f);
+    h.frames(3);
+    assert!(h.app.debug_popover_open());
+    let issues = h.app.debug_imported().unwrap();
+    assert_eq!(issues.len(), 2, "{issues:?}");
+    h.press(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert!(!h.app.debug_popover_open());
+
+    let clean = dir.join("clean.fountain");
+    std::fs::write(&clean, "INT. ROOM - DAY\n\nShe waits.\n").unwrap();
+    h.app.debug_import(&clean);
+    h.frames(3);
+    assert!(!h.app.debug_popover_open(), "nothing to report, no window");
+}
+
+#[test]
+fn home_says_when_an_update_is_out_until_it_is_dismissed() {
+    use crate::update::{Release, Status};
+    let mut h = Harness::with(1320.0, 900.0, "");
+    h.app.debug_go_home();
+    h.frames(2);
+    assert_eq!(h.app.debug_update_rect(), Rect::NOTHING, "nothing to say yet");
+    let newer = |v: &str| Status::Newer(Release { version: v.into(), url: String::new() });
+    h.app.debug_set_update(newer("9.9.0"));
+    h.frames(3);
+    let notice = h.app.debug_update_rect();
+    assert!(notice.width() > 300.0, "{notice:?}");
+    h.click(pos2(notice.right() - 25.0, notice.center().y));
+    h.frames(3);
+    assert_eq!(h.app.debug_update_rect(), Rect::NOTHING, "dismissed");
+    assert_eq!(storage::read_settings().dismissed_update, "9.9.0", "remembered");
+    h.app.debug_set_update(newer("9.9.1"));
+    h.frames(3);
+    assert!(h.app.debug_update_rect().width() > 300.0, "a later version speaks up again");
+}
+
+#[test]
+fn whats_new_shows_once_takes_the_keys_and_can_be_replayed() {
+    use crate::app::onboarding::Kind;
+    let mut h = Harness::with(1320.0, 900.0, "onboarded = \n");
+    assert_eq!(h.app.debug_tour(), Some((Kind::New, 0)));
+    let before = h.app.doc().clone();
+    h.type_text("typed while the tour was up");
+    h.press(Key::Enter, Modifiers::NONE);
+    assert_eq!(h.app.debug_tour(), Some((Kind::New, 1)));
+    h.press(Key::ArrowLeft, Modifiers::NONE);
+    assert_eq!(h.app.debug_tour(), Some((Kind::New, 0)));
+    assert_eq!(h.app.doc().blocks, before.blocks, "nothing reaches the script underneath");
+    h.press(Key::Escape, Modifiers::NONE);
+    assert_eq!(h.app.debug_tour(), None);
+    h.idle();
+    assert_eq!(storage::read_settings().onboarded, "blue-pages", "seen, so it will not show again");
+
+    h.app.debug_start_tour();
+    h.frames(1);
+    for _ in 0..7 {
+        assert!(h.app.debug_tour().is_some());
+        h.press(Key::Enter, Modifiers::NONE);
+    }
+    assert_eq!(h.app.debug_tour(), None, "seven steps, then back to writing");
 }

@@ -26,6 +26,10 @@ use crate::ui;
 mod home;
 mod team;
 mod keyboard;
+mod notes;
+mod reports;
+mod imported;
+pub mod onboarding;
 mod voices;
 
 const SNAPSHOT_IDLE: Duration = Duration::from_millis(700);
@@ -75,6 +79,8 @@ enum Popover {
     Account,
     History,
     Trash,
+    Reports,
+    Imported,
 }
 
 #[derive(Default)]
@@ -88,14 +94,13 @@ struct Layout2 {
     cast: Vec<CastMember>,
     speakers: Vec<String>,
     dialogue: f32,
+    block_pages: HashMap<u64, usize>,
+    changes: std::collections::HashSet<u64>,
+    labels: Vec<String>,
 }
 
 #[derive(Default)]
 struct Rail {
-    last_rects: HashMap<PathBuf, Rect>,
-    ghost: Option<(String, Rect, Instant)>,
-    starred_collapsed: bool,
-    all_collapsed: bool,
     menu: Option<(PathBuf, Pos2, u64)>,
 }
 
@@ -133,6 +138,9 @@ pub struct App {
     home_sel: usize,
     home_order: Vec<PathBuf>,
     home_keyed: bool,
+    home_hits: Option<(String, Vec<storage::Found>)>,
+    hit_rows: Vec<(PathBuf, usize, Rect)>,
+    pending_jump: Option<(PathBuf, usize)>,
     account_button_rect: Rect,
     team_add_id: String,
     team_add_role: crate::backend::Role,
@@ -142,8 +150,6 @@ pub struct App {
     pages: PagesState,
     mode: Mode,
 
-    search: String,
-    focus_search: bool,
     focus_title: bool,
     focus_mode: bool,
 
@@ -177,6 +183,7 @@ pub struct App {
     popover_frame: u64,
     settings_tab: usize,
     export_choice: PageChoice,
+    export_changed_only: bool,
     export_range: String,
     window_seen: Option<Popover>,
     menu_button_rect: Rect,
@@ -190,6 +197,18 @@ pub struct App {
 
     rail: Rail,
     find: Find,
+    note_edit: Option<notes::NoteEdit>,
+    left_tab: usize,
+    left_rect: Rect,
+    left_rows: Vec<(u64, Rect)>,
+    report: crate::report::Report,
+    report_tab: usize,
+    update_rect: Rect,
+    tour: Option<onboarding::Tour>,
+    imported: Option<imported::Imported>,
+    report_rows: Vec<(u64, Rect)>,
+    library_button: Rect,
+    rev_base: Option<(String, Document)>,
 
     frame_no: u64,
     page_key: String,
@@ -223,11 +242,12 @@ impl App {
         ctx.set_zoom_factor(settings.font_scale);
 
         let entries = store.list();
+        let first_run = settings.fresh && entries.is_empty() && store.team().is_none();
         let home = store.team().is_some() || !entries.is_empty();
         let (doc, path) = match entries.first() {
             Some(_) if home => (starter_document(), None),
             Some(e) => match store.load(&e.path) {
-                Load::Ready(d, _) => (d, Some(e.path.clone())),
+                Load::Ready(d, _) => (*d, Some(e.path.clone())),
                 Load::Pending | Load::Failed(_) => (starter_document(), None),
             },
             None => (starter_document(), None),
@@ -258,6 +278,9 @@ impl App {
             home_sel: 0,
             home_order: Vec::new(),
             home_keyed: false,
+            home_hits: None,
+            hit_rows: Vec::new(),
+            pending_jump: None,
             account_button_rect: Rect::NOTHING,
             team_add_id: String::new(),
             team_add_role: crate::backend::Role::Editor,
@@ -266,8 +289,6 @@ impl App {
             cards: CardsState::default(),
             pages: PagesState::default(),
             mode: Mode::Write,
-            search: String::new(),
-            focus_search: false,
             focus_title: false,
             focus_mode: false,
             settings,
@@ -295,6 +316,7 @@ impl App {
             popover_frame: 0,
             settings_tab: 0,
             export_choice: PageChoice::All,
+            export_changed_only: false,
             export_range: String::new(),
             window_seen: None,
             menu_button_rect: Rect::NOTHING,
@@ -307,6 +329,18 @@ impl App {
             aside_islands: Vec::new(),
             rail: Rail::default(),
             find: Find::default(),
+            note_edit: None,
+            left_tab: 0,
+            left_rect: Rect::NOTHING,
+            left_rows: Vec::new(),
+            report: crate::report::Report::default(),
+            report_tab: 0,
+            update_rect: Rect::NOTHING,
+            tour: None,
+            imported: None,
+            report_rows: Vec::new(),
+            library_button: Rect::NOTHING,
+            rev_base: None,
             frame_no: 0,
             page_key: String::new(),
             page_born: Instant::now(),
@@ -321,6 +355,9 @@ impl App {
         app.ed.focus_block = app.doc.blocks.first().map(|b| b.id);
         app.ed.pending_focus = app.doc.blocks.first().map(|b| (b.id, Caret::End));
         app.refresh_layout(true);
+        if let Some(kind) = onboarding::wanted(&app.settings.onboarded, first_run) {
+            app.start_tour(kind);
+        }
         app
     }
 
@@ -447,7 +484,7 @@ impl App {
             }
         }
         match self.store.load(&path) {
-            Load::Ready(doc, access) => self.install(path, doc, access),
+            Load::Ready(doc, access) => self.install(path, *doc, access),
             Load::Pending => self.opening = Some(path),
             Load::Failed(e) => self.deck.say("Could not open", &e, Tone::Danger),
         }
@@ -475,6 +512,14 @@ impl App {
         }
         if self.mode == Mode::Write {
             self.ed.pending_focus = self.doc.blocks.first().map(|b| (b.id, Caret::End));
+        }
+        if let Some((want, k)) = self.pending_jump.take() {
+            if self.path.as_ref() == Some(&want) {
+                if let Some(id) = self.doc.blocks.get(k).map(|b| b.id) {
+                    self.ed.focus_block = Some(id);
+                    self.ed.jump_to(id);
+                }
+            }
         }
         self.refresh_layout(true);
     }
@@ -531,9 +576,6 @@ impl App {
             .find(|e| e.path == path)
             .map(|e| e.title.clone())
             .unwrap_or_default();
-        if let Some(r) = self.rail.last_rects.get(path).copied() {
-            self.rail.ghost = Some((title.clone(), r, Instant::now()));
-        }
         match self.store.delete(path) {
             Ok(()) => {
                 if self.path.as_deref() == Some(path) {
@@ -584,6 +626,7 @@ impl App {
 
     fn refresh_entries(&mut self) {
         self.entries = self.store.list();
+        self.home_hits = None;
     }
 
     fn watch_library(&mut self) {
@@ -600,10 +643,33 @@ impl App {
         if !(self.layout_stale && (stale_enough || now)) {
             return;
         }
-        let starts: HashMap<u64, usize> = export::page_starts(&self.doc).into_iter().map(|(n, id)| (id, n)).collect();
+        self.ensure_rev_base();
+        let changes = match &self.rev_base {
+            Some((_, base)) if self.doc.meta.revising() => crate::revision::changed(base, &self.doc),
+            _ => Default::default(),
+        };
+        let laid = export::layout(&self.doc, self.rev_lock());
         let lengths = export::scene_lengths(&self.doc);
-        let pages = export::page_count(&self.doc);
+        let pages = laid.len();
+        let mut block_pages: HashMap<u64, usize> = HashMap::new();
+        let mut starts: HashMap<u64, usize> = HashMap::new();
+        for (k, (_, page)) in laid.iter().enumerate() {
+            if k > 0 {
+                if let Some(id) = page.iter().find_map(|l| l.block) {
+                    starts.entry(id).or_insert(k + 1);
+                }
+            }
+            for l in page {
+                for id in [l.block, l.right.as_ref().and_then(|r| r.block)].into_iter().flatten() {
+                    block_pages.entry(id).or_insert(k + 1);
+                }
+            }
+        }
+        let labels: Vec<String> = laid.into_iter().map(|(l, _)| l).collect();
         self.layout = Layout2 {
+            block_pages,
+            changes,
+            labels,
             acts: editor::act_notes(&self.doc, &starts, pages),
             page_starts: starts,
             pages,
@@ -627,10 +693,36 @@ impl App {
         self.layout_stale = false;
     }
 
+    pub(super) fn rev_lock(&self) -> Option<&Document> {
+        match &self.rev_base {
+            Some((_, base)) if self.doc.meta.revising() && self.doc.meta.locked => Some(base),
+            _ => None,
+        }
+    }
+
+    fn changed_page_count(&self) -> usize {
+        let mut pages: Vec<usize> = self.layout.changes.iter().filter_map(|id| self.layout.block_pages.get(id).copied()).collect();
+        pages.sort_unstable();
+        pages.dedup();
+        pages.len()
+    }
+
+    pub(super) fn page_label(&self, n: usize) -> String {
+        self.layout.labels.get(n.wrapping_sub(1)).cloned().unwrap_or_else(|| n.to_string())
+    }
+
     fn pdf_options(&self, pages: Option<Vec<usize>>) -> export::PdfOptions {
+        let revising = self.doc.meta.revising();
+        let colour = self.doc.meta.revision.unwrap_or(0);
         export::PdfOptions {
-            title_page: self.settings.pdf_title_page,
+            title_page: self.settings.pdf_title_page && !(revising && self.export_changed_only),
             scene_numbers: self.settings.pdf_scene_numbers,
+            notes: self.settings.pdf_notes,
+            changed: if revising { self.layout.changes.clone() } else { Default::default() },
+            revision: revising.then(|| (crate::revision::header(colour, &self.doc.meta.revision_date), crate::revision::paper(colour))),
+            lock: self.rev_lock().map(|d| Box::new(d.clone())),
+            changed_only: revising && self.export_changed_only,
+            tint: revising && self.settings.pdf_tint,
             pages,
             voices: if self.settings.pdf_character_colors {
                 Some(theme::voice_inks(&self.layout.speakers, self.settings.colour_seed, self.chosen_voices()))
@@ -646,7 +738,7 @@ impl App {
         }
         self.ed
             .focus_block
-            .and_then(|id| export::page_of_block(&self.doc, id))
+            .and_then(|id| self.layout.block_pages.get(&id).copied().or_else(|| export::page_of_block(&self.doc, id)))
             .or(Some(1))
     }
 
@@ -690,19 +782,19 @@ impl App {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn import_path(&mut self, path: &Path) {
-        match storage::import_file(path) {
-            Ok(doc) => self.import_doc(doc),
+        match storage::import_file_checked(path) {
+            Ok((doc, issues)) => self.import_doc(doc, issues),
             Err(e) => self.deck.say("Could not import", &e, Tone::Danger),
         }
     }
 
     fn import_bytes(&mut self, name: &str, bytes: &[u8]) {
         let text = String::from_utf8_lossy(bytes);
-        let doc = storage::import_text(name, &text);
-        self.import_doc(doc);
+        let (doc, issues) = storage::import_text_checked(name, &text);
+        self.import_doc(doc, issues);
     }
 
-    fn import_doc(&mut self, doc: Document) {
+    fn import_doc(&mut self, doc: Document, issues: Vec<crate::fountain::Issue>) {
         if self.dirty {
             self.save(false);
         }
@@ -712,10 +804,14 @@ impl App {
                 let title = doc.meta.title.clone();
                 self.open(new_path);
                 self.mode = Mode::Write;
-                self.deck.ok(
-                    "Imported",
-                    &format!("{title} — {} scenes", doc.scene_count()),
-                );
+                if issues.is_empty() {
+                    self.deck.ok(
+                        "Imported",
+                        &format!("{title} — {} scenes", doc.scene_count()),
+                    );
+                } else {
+                    self.show_import_report(title, issues);
+                }
             }
             Err(e) => self.deck.say("Could not import", &e, Tone::Danger),
         }
@@ -739,7 +835,7 @@ impl App {
             return;
         }
         match self.store.load_snapshot(snap) {
-            Load::Ready(old, _) => self.apply_snapshot(old),
+            Load::Ready(old, _) => self.apply_snapshot(*old),
             Load::Pending => self.restoring = Some(snap.to_path_buf()),
             Load::Failed(e) => self.deck.say("Could not restore", &e, Tone::Danger),
         }
@@ -968,6 +1064,13 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
 
+            let tip = format!("Back to your scripts · {}", self.keys_for(keys::Command::FindScripts));
+            if ui::ribbon_button(ui, Icon::ChevronLeft, "Library", &tip, false) {
+                self.go_home();
+            }
+            self.library_button = ui.min_rect();
+            ui::rule(ui, 22.0);
+
             if let Some(picked) = ui::segmented(
                 ui,
                 &[
@@ -1040,6 +1143,10 @@ impl App {
                 ui::rule(ui, 20.0);
                 ui.add_space(4.0);
 
+                let tip = format!("Reports — characters, scenes, locations · {}", self.keys_for(keys::Command::Reports));
+                if ui::ribbon_button(ui, Icon::Graph, "", &tip, self.popover == Some(Popover::Reports)) {
+                    self.open_reports();
+                }
                 let tip = format!("Focus — just the scene you are in · {}", self.keys_for(keys::Command::FocusMode));
                 if ui::ribbon_button(ui, Icon::Eye, "", &tip, self.focus_mode) {
                     self.focus_mode = !self.focus_mode;
@@ -1058,7 +1165,7 @@ impl App {
                     self.settings.show_scenes = !self.settings.show_scenes;
                     self.save_settings();
                 }
-                let tip = format!("Library · {}", self.keys_for(keys::Command::ToggleLibrary));
+                let tip = format!("Notes and changes · {}", self.keys_for(keys::Command::ToggleLibrary));
                 if ui::ribbon_button(ui, Icon::Sidebar, "", &tip, self.settings.show_library) {
                     self.settings.show_library = !self.settings.show_library;
                     self.save_settings();
@@ -1199,6 +1306,11 @@ impl App {
             self.new_scene();
             self.mode = Mode::Cards;
         }
+        let tip = "Beat guides on the timeline: inciting incident, the act breaks, midpoint and climax";
+        if ui::ribbon_button(ui, Icon::Timeline, "Beats", tip, self.settings.beat_guides) {
+            self.settings.beat_guides = !self.settings.beat_guides;
+            self.save_settings();
+        }
         let left = (room - ui.min_rect().width()).max(0.0);
         let text = ui::pick_that_fits(
             ui,
@@ -1253,367 +1365,7 @@ impl App {
     // library rail here---
 
     fn browser(&mut self, ctx: &egui::Context) {
-        if !self.settings.show_library || self.focus_mode {
-            return;
-        }
-        egui::SidePanel::left("ns-rail")
-            .exact_width(theme::RAIL_W + theme::GAP)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(egui::Frame::none().inner_margin(egui::Margin {
-                left: theme::GAP,
-                right: 0.0,
-                top: theme::GAP,
-                bottom: theme::GAP,
-            }))
-            .show(ctx, |ui| {
-                theme::island_frame(theme::R_ISLAND)
-                    .inner_margin(egui::Margin::symmetric(12.0, 14.0))
-                    .show(ui, |ui| {
-                        ui.set_min_size(ui.available_size());
-
-                        // make things here---
-                        ui.horizontal(|ui| {
-                            let w = ui.available_width() - 38.0;
-                            if self.can_write() {
-                                if new_script_button(ui, w, &self.keys_for(keys::Command::NewScript)) {
-                                    self.new_script();
-                                }
-                                if ui::icon_button(ui, Icon::Upload, "Import Fountain, Final Draft or markdown  ·  or drop a file on the window", 32.0) {
-                                    self.start_import();
-                                }
-                            } else {
-                                ui.allocate_exact_size(Vec2::new(w, 34.0), Sense::hover());
-                            }
-                        });
-                        ui.add_space(9.0);
-
-                        // filter here---
-                        let search = ui.add(
-                            egui::TextEdit::singleline(&mut self.search)
-                                .id(egui::Id::new("ns-search"))
-                                .desired_width(f32::INFINITY)
-                                .margin(egui::Margin::symmetric(10.0, 7.0))
-                                .hint_text("Filter scripts"),
-                        );
-                        if self.focus_search {
-                            search.request_focus();
-                            self.focus_search = false;
-                        }
-                        ui.add_space(9.0);
-
-                        let mut open: Option<PathBuf> = None;
-                        let mut ask: Option<PathBuf> = None;
-                        let mut star: Option<PathBuf> = None;
-                        let mut menu: Option<(PathBuf, Pos2)> = None;
-
-                        const TRACKER: f32 = 34.0;
-                        const FOOT: f32 = 24.0;
-                        let tracker = !self.settings.youtrack_url.trim().is_empty();
-                        let gaps = ui.spacing().item_spacing.y * if tracker { 2.0 } else { 1.0 };
-                        let list_h = (ui.available_height() - if tracker { TRACKER } else { 0.0 } - FOOT - gaps).max(60.0);
-                        let (list, _) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), list_h),
-                            Sense::hover(),
-                        );
-                        let mut list_ui = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(list)
-                                .layout(Layout::top_down(Align::Min)),
-                        );
-                        egui::ScrollArea::vertical()
-                            .id_salt("ns-rail-list")
-                            .auto_shrink([false; 2])
-                            .max_height(list_h)
-                            .show(&mut list_ui, |ui| {
-                                self.rail_body(ui, &mut open, &mut ask, &mut star, &mut menu);
-                            });
-
-                        if tracker && youtrack_button(ui, &self.settings.youtrack_url) {
-                            let url = self.settings.youtrack_url.trim().to_string();
-                            if url.starts_with("http://") || url.starts_with("https://") {
-                                self.store.open_url(&url);
-                            } else {
-                                self.deck.warn("That is not a web address", "Set the YouTrack link in Settings.");
-                            }
-                        }
-
-                        let (foot, _) =
-                            ui.allocate_exact_size(Vec2::new(ui.available_width(), FOOT), Sense::hover());
-                        self.foot_rect = foot;
-                        if ui::maker_line(ui, foot.translate(Vec2::new(0.0, 2.0)), false) {
-                            self.store.open_url(crate::NATIVECOMPUTE_URL);
-                        }
-
-                        if let Some(path) = open {
-                            self.open(path);
-                        }
-                        if let Some(path) = star {
-                            self.toggle_star(&path);
-                        }
-                        if let Some(path) = ask {
-                            self.ask_delete(path);
-                        }
-                        if let Some((path, at)) = menu {
-                            self.rail.menu = Some((path, at, self.frame_no));
-                        }
-                    });
-            });
-    }
-
-    fn rail_body(
-        &mut self,
-        ui: &mut egui::Ui,
-        open: &mut Option<PathBuf>,
-        ask: &mut Option<PathBuf>,
-        star: &mut Option<PathBuf>,
-        menu: &mut Option<(PathBuf, Pos2)>,
-    ) {
-        let p = pal();
-        let needle = self.search.trim().to_lowercase();
-        let mut list: Vec<Entry> = self
-            .entries
-            .iter()
-            .filter(|e| {
-                needle.is_empty()
-                    || e.title.to_lowercase().contains(&needle)
-                    || e.preview.to_lowercase().contains(&needle)
-            })
-            .cloned()
-            .collect();
-        match self.settings.sort_by {
-            SortBy::Recent => list.sort_by_key(|a| std::cmp::Reverse(a.modified)),
-            SortBy::Title => list.sort_by_key(|a| a.title.to_lowercase()),
-            SortBy::Length => list.sort_by_key(|a| std::cmp::Reverse(a.pages)),
-        }
-
-        let mut selected_row: Option<Rect> = None;
-        let mut seen_rects: HashMap<PathBuf, Rect> = HashMap::new();
-        let starred_first = self.settings.starred_first;
-        let (starred, rest): (Vec<Entry>, Vec<Entry>) = if starred_first {
-            list.into_iter().partition(|e| e.starred)
-        } else {
-            (Vec::new(), list)
-        };
-        let mut shown = 0usize;
-
-        for (label, icon, tint, items, is_starred) in [
-            ("Starred", Icon::StarFilled, Some(p.warn), &starred, true),
-            ("Scripts", Icon::File, None, &rest, false),
-        ] {
-            if items.is_empty() && (is_starred || shown > 0) {
-                continue;
-            }
-            let mut collapsed = if is_starred {
-                self.rail.starred_collapsed
-            } else {
-                self.rail.all_collapsed
-            };
-            let head = section_header(ui, label, icon, items.len(), &mut collapsed, tint);
-            if head.clicked {
-                if is_starred {
-                    self.rail.starred_collapsed = collapsed;
-                } else {
-                    self.rail.all_collapsed = collapsed;
-                }
-            }
-            if !collapsed {
-                let branch = ui.painter().add(egui::Shape::Noop);
-                let mut kid_rects = Vec::new();
-                for e in items {
-                    shown += 1;
-                    let r = self.script_row(ui, e, open, ask, star, menu);
-                    seen_rects.insert(e.path.clone(), r);
-                    if self.path.as_deref() == Some(e.path.as_path()) {
-                        selected_row = Some(r);
-                    }
-                    kid_rects.push(r);
-                }
-                draw_branch(ui, branch, head.rect, &kid_rects, tint.unwrap_or(p.text_faint));
-            }
-            ui.add_space(8.0);
-        }
-
-        self.rail.last_rects = seen_rects;
-
-        if let Some((title, rect, at)) = self.rail.ghost.clone() {
-            let t = (at.elapsed().as_secs_f32() / 0.5).clamp(0.0, 1.0);
-            if t >= 1.0 || !anim::enabled() {
-                self.rail.ghost = None;
-            } else {
-                let fade = 1.0 - anim::smootherstep(t);
-                let r = Rect::from_center_size(
-                    Pos2::new(rect.center().x, rect.center().y - 14.0 * (1.0 - fade)),
-                    Vec2::new(rect.width() * (0.7 + 0.3 * fade), rect.height() * fade.max(0.05)),
-                );
-                ui.painter().rect_filled(
-                    r,
-                    egui::Rounding::same(theme::R_MD),
-                    theme::wash(p.danger, (60.0 * fade) as u8),
-                );
-                ui.painter().text(
-                    Pos2::new(r.left() + 16.0, r.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    ui::elide(&title, 22),
-                    theme::font(theme::T_SM),
-                    theme::wash(p.danger_light, (200.0 * fade) as u8),
-                );
-                anim::keep_going(ui.ctx());
-            }
-        }
-
-        if let Some(r) = selected_row {
-            let y = anim::glide(ui.ctx(), "ns-rail-marker", r.center().y, 0.20);
-            let x = anim::glide(ui.ctx(), "ns-rail-marker-x", r.left() + 7.5, 0.30);
-            let bar = Rect::from_center_size(Pos2::new(x, y), Vec2::new(3.0, r.height() - 20.0));
-            ui.painter()
-                .rect_filled(bar, egui::Rounding::same(2.0), p.primary_light);
-            if (y - r.center().y).abs() > 0.4 {
-                anim::keep_going(ui.ctx());
-            }
-        }
-
-        if shown == 0 {
-            ui.add_space(14.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    egui::RichText::new(if needle.is_empty() {
-                        "No scripts yet."
-                    } else {
-                        "Nothing matches."
-                    })
-                    .font(theme::font(theme::T_SM))
-                    .color(p.text_faint),
-                );
-            });
-        }
-    }
-
-    fn script_row(
-        &self,
-        ui: &mut egui::Ui,
-        e: &Entry,
-        open: &mut Option<PathBuf>,
-        ask: &mut Option<PathBuf>,
-        star: &mut Option<PathBuf>,
-        menu: &mut Option<(PathBuf, Pos2)>,
-    ) -> Rect {
-        let p = pal();
-        let selected = self.path.as_deref() == Some(e.path.as_path());
-        let w = ui.available_width();
-        let (slot, resp) = ui.allocate_exact_size(Vec2::new(w, 40.0), Sense::click());
-        let rect = Rect::from_min_max(Pos2::new(slot.left() + INDENT, slot.top()), slot.max);
-        let _ = ui.interact(rect, row_id(&e.path), Sense::hover());
-        let hot = anim::ease(ui.ctx(), resp.id, resp.hovered() || selected, anim::HOVER);
-
-        let fill = if selected || hot > 0.5 { p.raised } else { p.solid_hi };
-        ui.painter()
-            .rect_filled(rect, egui::Rounding::same(theme::R_SM), theme::mix(p.solid_hi, fill, hot));
-        ui.painter().rect_stroke(
-            rect.shrink(0.5),
-            egui::Rounding::same(theme::R_SM),
-            Stroke::new(
-                1.0_f32,
-                if selected { p.primary_light } else { theme::mix(p.line, p.line_strong, hot) },
-            ),
-        );
-
-        let title = if selected { self.title_or_untitled() } else { e.title.clone() };
-        let right_pad = if hot > 0.02 { 60.0 } else if e.starred { 36.0 } else { 4.0 };
-        let title_font = if selected { theme::font_med(theme::T_SM) } else { theme::font(theme::T_SM) };
-        let row_clip = ui.painter().with_clip_rect(rect.shrink(1.0));
-        row_clip.text(
-            Pos2::new(rect.left() + 16.0, rect.top() + 14.0),
-            egui::Align2::LEFT_CENTER,
-            ui::elide_to_width(ui.ctx(), &title, title_font.clone(), 0.0, rect.width() - 24.0 - right_pad),
-            title_font,
-            p.text,
-        );
-        let pages = if selected { self.layout.pages } else { e.pages };
-        match self.team_row_line(e, pages) {
-            Some((line, live)) => {
-                let x = rect.left() + 16.0;
-                if live {
-                    ui.painter().circle_filled(Pos2::new(x + 3.0, rect.bottom() - 13.0), 2.6, p.ok);
-                }
-                let lx = x + if live { 11.0 } else { 0.0 };
-                row_clip.text(
-                    Pos2::new(lx, rect.bottom() - 13.0),
-                    egui::Align2::LEFT_CENTER,
-                    ui::elide_to_width(ui.ctx(), &line, theme::font(theme::T_MICRO), 0.0, rect.right() - lx - 8.0 - right_pad),
-                    theme::font(theme::T_MICRO),
-                    if live { p.text_dim } else { p.text_faint },
-                );
-            }
-            None => {
-                ui.painter().text(
-                    Pos2::new(rect.left() + 16.0, rect.bottom() - 13.0),
-                    egui::Align2::LEFT_CENTER,
-                    format!("{pages} pg · {}", relative_time(e.modified)),
-                    theme::font_mono(theme::T_MICRO),
-                    p.text_faint,
-                );
-            }
-        }
-
-        let star_rect = Rect::from_center_size(
-            Pos2::new(rect.right() - 44.0, rect.center().y),
-            Vec2::splat(24.0),
-        );
-        let del_rect = Rect::from_center_size(
-            Pos2::new(rect.right() - 20.0, rect.center().y),
-            Vec2::splat(24.0),
-        );
-        let star_resp = ui.interact(star_rect, resp.id.with("star"), Sense::click());
-        let del_resp = ui.interact(del_rect, resp.id.with("del"), Sense::click());
-
-        let star_hot = anim::ease(ui.ctx(), star_resp.id, star_resp.hovered(), anim::HOVER);
-        if e.starred || hot > 0.02 {
-            let lit = if e.starred { 1.0 } else { hot };
-            icons::draw(
-                ui.painter(),
-                star_rect.shrink(6.0),
-                if e.starred { Icon::StarFilled } else { Icon::Star },
-                if e.starred {
-                    theme::lighten(p.warn, 0.2 * star_hot)
-                } else {
-                    theme::mix(theme::wash(p.text_faint, (200.0 * lit) as u8), p.warn, star_hot)
-                },
-            );
-        }
-        let del_hot = anim::ease(ui.ctx(), del_resp.id, del_resp.hovered(), anim::HOVER);
-        let can_delete = self.can_write();
-        if hot > 0.02 && can_delete {
-            icons::draw(
-                ui.painter(),
-                del_rect.shrink(6.0),
-                Icon::Trash,
-                theme::mix(theme::wash(p.text_faint, (200.0 * hot) as u8), p.danger_light, del_hot),
-            );
-        }
-
-        if star_resp.clicked() {
-            *star = Some(e.path.clone());
-        } else if del_resp.clicked() && can_delete {
-            *ask = Some(e.path.clone());
-        } else if resp.clicked() && !selected {
-            *open = Some(e.path.clone());
-        }
-        if resp.secondary_clicked() {
-            if let Some(q) = ui.ctx().pointer_latest_pos() {
-                *menu = Some((e.path.clone(), q));
-            }
-        }
-        let _ = star_resp.on_hover_text(if e.starred { "Unstar" } else { "Star this script" });
-        if can_delete {
-            let _ = del_resp.on_hover_text("Delete this script");
-        }
-        if !e.preview.is_empty() {
-            let _ = resp.on_hover_text(format!("{}\n{} scenes · right click for more", e.preview, e.scenes));
-        }
-
-        ui.add_space(5.0);
-        rect
+        self.left_panel(ctx);
     }
 
     fn row_menu(&mut self, ctx: &egui::Context) {
@@ -2259,6 +2011,8 @@ impl App {
     fn write_page(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
         let starts = std::mem::take(&mut self.layout.page_starts);
+        let labels = std::mem::take(&mut self.layout.labels);
+        let changes = std::mem::take(&mut self.layout.changes);
         let voices = self.voices();
         egui::ScrollArea::vertical()
             .id_salt("ns-write")
@@ -2289,6 +2043,9 @@ impl App {
                     element_colors: self.settings.element_colors,
                     char_colors: voices.as_ref(),
                     pages: self.layout.pages,
+                    margin: pad,
+                    labels: &labels,
+                    changed: &changes,
                 };
                 ui.horizontal(|ui| {
                     ui.add_space(pad);
@@ -2301,8 +2058,13 @@ impl App {
                 });
             });
         self.layout.page_starts = starts;
+        self.layout.labels = labels;
+        self.layout.changes = changes;
         if changed {
             self.mark_changed();
+        }
+        if let Some(id) = self.ed.note_request.take() {
+            self.open_note(id);
         }
     }
 
@@ -2453,7 +2215,7 @@ impl App {
             .id_salt("ns-cards")
             .auto_shrink([false; 2])
             .show(ui, |ui| {
-                out = cards::show(ui, &mut self.doc, &mut self.cards, &lengths, &act_notes, live, self.frame_no);
+                out = cards::show(ui, &mut self.doc, &mut self.cards, &lengths, &act_notes, live, self.frame_no, self.settings.beat_guides);
             });
         if out.changed {
             self.mark_changed();
@@ -2504,7 +2266,14 @@ impl App {
 
     fn read_page(&mut self, ui: &mut egui::Ui) {
         let voices = if self.settings.character_colors_reading { self.voices() } else { None };
-        let jump = pages::show(ui, &self.doc, &mut self.pages, self.settings.scene_numbers, voices.as_ref());
+        let revising = self.doc.meta.revising();
+        let locked = revising && self.doc.meta.locked;
+        let rev = pages::Revised {
+            lock: self.rev_base.as_ref().filter(|_| locked).map(|(_, d)| d),
+            changed: revising.then_some(&self.layout.changes),
+            header: revising.then(|| crate::revision::header(self.doc.meta.revision.unwrap_or(0), &self.doc.meta.revision_date)),
+        };
+        let jump = pages::show(ui, &self.doc, &mut self.pages, self.settings.scene_numbers, voices.as_ref(), &rev);
         if let Some(id) = jump {
             self.mode = Mode::Write;
             self.ed.jump_to(id);
@@ -2674,7 +2443,7 @@ impl App {
     // popovers here---
 
     fn popovers(&mut self, ctx: &egui::Context) {
-        let window = self.popover.filter(|p| matches!(p, Popover::Settings | Popover::Export));
+        let window = self.popover.filter(|p| matches!(p, Popover::Settings | Popover::Export | Popover::Reports | Popover::Imported));
         if window.is_some() && window != self.window_seen {
             ctx.memory_mut(|m| {
                 if let Some(id) = m.focused() {
@@ -2691,6 +2460,14 @@ impl App {
             ctx.animate_bool_with_time(egui::Id::new("ns-export-veil"), false, 0.0);
             ctx.animate_bool_with_time(egui::Id::new("ns-export-rise"), false, 0.0);
         }
+        if self.popover != Some(Popover::Imported) {
+            ctx.animate_bool_with_time(egui::Id::new("ns-imported-veil"), false, 0.0);
+            ctx.animate_bool_with_time(egui::Id::new("ns-imported-rise"), false, 0.0);
+        }
+        if self.popover != Some(Popover::Reports) {
+            ctx.animate_bool_with_time(egui::Id::new("ns-reports-veil"), false, 0.0);
+            ctx.animate_bool_with_time(egui::Id::new("ns-reports-rise"), false, 0.0);
+        }
         self.voice_picker(ctx);
         match self.popover {
             Some(Popover::Menu) => self.more_menu(ctx),
@@ -2701,6 +2478,8 @@ impl App {
             Some(Popover::Account) => self.account_menu(ctx),
             Some(Popover::History) => self.history_panel(ctx),
             Some(Popover::Trash) => self.trash_panel(ctx),
+            Some(Popover::Reports) => self.reports_window(ctx),
+            Some(Popover::Imported) => self.imported_window(ctx),
             None => {}
         }
         self.row_menu(ctx);
@@ -2932,7 +2711,9 @@ impl App {
                         .enumerate()
                         .map(|(k, e)| format!("{}  ·  {}", e.label(), self.keys_for(keys::Command::Element(k as u8 + 1))))
                         .collect();
-                    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                    let dual = format!("Dual dialogue  ·  {}", self.keys_for(keys::Command::DualDialogue));
+                    let mut refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                    refs.push(&dual);
                     ui.set_width(ui::menu_width(ui, &refs));
                     let mut rects = Vec::new();
                     for (k, e) in Element::ALL.iter().enumerate() {
@@ -2943,6 +2724,11 @@ impl App {
                             }
                             self.popover = None;
                         }
+                    }
+                    ui::separator(ui);
+                    if ui::menu_item(ui, &mut rects, &dual, Icon::Group, false) {
+                        self.popover = None;
+                        self.run(keys::Command::DualDialogue);
                     }
                 });
             })
@@ -2978,7 +2764,8 @@ impl App {
         let selection = self.export_selection();
         let here = self.page_here();
         let t = anim::ease(ctx, "ns-export-rise", true, 0.30);
-        let size = Vec2::new(452.0, 476.0);
+        let revising = self.doc.meta.revising();
+        let size = Vec2::new(452.0, 476.0 + if revising { 128.0 } else { 0.0 });
         let rect = Rect::from_center_size(screen.center(), size * (0.97 + 0.03 * t));
 
         egui::Area::new(egui::Id::new("ns-export"))
@@ -3028,7 +2815,7 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let this_label = match here {
-                        Some(n) => format!("This page · {n}"),
+                        Some(n) => format!("This page · {}", self.page_label(n)),
                         None => "This page · title".to_string(),
                     };
                     for (choice, label) in [
@@ -3057,6 +2844,17 @@ impl App {
                     }
                 }
                 let (what, bad) = match &selection {
+                    _ if revising && self.export_changed_only => {
+                        let mut pages: Vec<usize> = self.layout.changes.iter().filter_map(|id| self.layout.block_pages.get(id).copied()).collect();
+                        pages.sort_unstable();
+                        pages.dedup();
+                        let names: Vec<String> = pages.iter().map(|n| self.page_label(*n)).collect();
+                        if names.is_empty() {
+                            ("No page has changed yet".to_string(), true)
+                        } else {
+                            (format!("Only the changed pages: {}", names.join(", ")), false)
+                        }
+                    }
                     Ok(None) => (
                         format!("Every page, 1 to {total}{}", if self.settings.pdf_title_page { ", after the title page" } else { "" }),
                         false,
@@ -3082,6 +2880,27 @@ impl App {
                         .color(if bad { p.danger_light } else { p.text_faint }),
                 );
 
+                if revising {
+                    ui.add_space(4.0);
+                    ui::separator(ui);
+                    let colour = self.doc.meta.revision.unwrap_or(0);
+                    ui::section(ui, &crate::revision::header(colour, &self.doc.meta.revision_date));
+                    let mut v = self.export_changed_only;
+                    let changed_pages = self.layout.labels.len().min(self.changed_page_count());
+                    let hint = match changed_pages {
+                        0 => "Nothing has changed yet.".to_string(),
+                        1 => "Just the page with a change, to hand out in the new colour.".to_string(),
+                        n => format!("Just the {n} pages with a change, to hand out in the new colour."),
+                    };
+                    if ui::toggle_row(ui, "Changed pages only", &hint, &mut v) {
+                        self.export_changed_only = v;
+                    }
+                    let mut v = self.settings.pdf_tint;
+                    if ui::toggle_row(ui, "Coloured paper", "Tint the changed pages in the revision colour, for printing on white.", &mut v) {
+                        self.settings.pdf_tint = v;
+                    }
+                }
+
                 ui.add_space(4.0);
                 ui::separator(ui);
                 ui::section(ui, "On the page");
@@ -3092,6 +2911,10 @@ impl App {
                 let mut v = self.settings.pdf_scene_numbers;
                 if ui::toggle_row(ui, "Scene numbers", "In both margins, the way a shooting script carries them.", &mut v) {
                     self.settings.pdf_scene_numbers = v;
+                }
+                let mut v = self.settings.pdf_notes;
+                if ui::toggle_row(ui, "Notes", "Every note you left, listed after the script with the page it belongs to.", &mut v) {
+                    self.settings.pdf_notes = v;
                 }
                 let mut v = self.settings.pdf_character_colors;
                 if ui::toggle_row(
@@ -3483,7 +3306,7 @@ impl App {
                 ("Details", "Title page and figures · Ctrl+I", 0),
                 ("Scenes", "The navigator · Ctrl+Shift+I", 1),
                 ("Cast", "Who speaks, and how much", 2),
-                ("Library", "Your scripts · Ctrl+B", 3),
+                ("Notes and changes", "Beside the page · Ctrl+B", 3),
             ] {
                 let slot = match key {
                     0 => &mut self.settings.show_details,
@@ -3737,6 +3560,9 @@ impl App {
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         use egui::Key;
+        if self.note_edit.is_some() {
+            return;
+        }
         let commands = self.commands();
         for (cmd, chord) in self.settings.keys.listen(&commands, crate::WEB) {
             if ctx.input_mut(|i| i.consume_shortcut(&chord)) {
@@ -3788,8 +3614,10 @@ impl App {
                 }
             }
             C::FindScripts => {
-                self.settings.show_library = true;
-                self.focus_search = true;
+                if !self.home {
+                    self.go_home();
+                }
+                self.focus_home_search = true;
             }
             C::Find => {
                 if self.guard_edit() {
@@ -3839,6 +3667,35 @@ impl App {
                 self.settings.page_px = px;
                 self.save_settings();
             }
+            C::DualDialogue => {
+                if !self.guard_edit() {
+                    return;
+                }
+                let Some(id) = self.ed.focus_block else {
+                    return;
+                };
+                let mut next = self.doc.clone();
+                match next.toggle_dual(id) {
+                    Ok(on) => {
+                        self.checkpoint();
+                        self.doc = next;
+                        self.mark_changed();
+                        if on {
+                            self.deck.ok("Dual dialogue", "The two speeches now sit side by side.");
+                        } else {
+                            self.deck.ok("One speech after the other", "");
+                        }
+                    }
+                    Err(why) => self.deck.say("Dual dialogue", why, Tone::Info),
+                }
+            }
+            C::AddNote => {
+                self.mode = Mode::Write;
+                if let Some(id) = self.ed.focus_block {
+                    self.open_note(id);
+                }
+            }
+            C::Reports => self.open_reports(),
             C::Element(n) => {
                 if !self.guard_edit() {
                     return;
@@ -3989,7 +3846,9 @@ impl App {
 
         chrome::backdrop(ctx, self.window_ground());
 
-        if self.key_capture.is_some() {
+        if self.tour.is_some() {
+            self.tour_keys(ctx);
+        } else if self.key_capture.is_some() {
             self.capture_chord(ctx);
         } else if !self.deck.asking() {
             if self.home {
@@ -4031,8 +3890,10 @@ impl App {
             self.aside(ctx);
             self.page(ctx);
             self.find_bar(ctx);
+            self.note_window(ctx);
         }
         self.popovers(ctx);
+        self.tour_overlay(ctx);
         chrome::resize_handles(ctx);
 
         if let Some(answer) = self.deck.show(ctx) {
@@ -4040,6 +3901,7 @@ impl App {
         }
 
         if let Some(splash) = self.splash.as_mut() {
+            splash.set_status(self.update.clone());
             if splash.show(ctx) {
                 if self.frame_no < 3 {
                     crate::splash::centre(ctx, crate::splash::CARD);
@@ -4140,6 +4002,9 @@ impl App {
     pub fn debug_menu_item(&self, n: usize) -> Option<Rect> {
         self.menu_item_rects.get(n).copied()
     }
+    pub fn debug_cards(&self) -> &cards::CardsState {
+        &self.cards
+    }
     pub fn debug_card_rect(&self, n: usize) -> Option<Rect> {
         self.cards.last_rects.get(n).copied()
     }
@@ -4197,8 +4062,29 @@ impl App {
     pub fn debug_focus_mode(&mut self, on: bool) {
         self.focus_mode = on;
     }
-    pub fn debug_row_rect(&self, path: &Path) -> Option<Rect> {
-        self.rail.last_rects.get(path).copied()
+    pub fn debug_set_update(&mut self, status: crate::update::Status) {
+        self.update = status;
+    }
+    pub fn debug_update_rect(&self) -> Rect {
+        self.update_rect
+    }
+    pub fn debug_library_button(&self) -> Rect {
+        self.library_button
+    }
+    pub fn debug_left_rows(&self) -> Vec<(u64, Rect)> {
+        self.left_rows.clone()
+    }
+    pub fn debug_left_tab(&mut self, tab: usize) {
+        self.left_tab = tab;
+    }
+    pub fn debug_start_revision(&mut self) {
+        self.start_revision();
+    }
+    pub fn debug_changes(&mut self) -> Vec<u64> {
+        self.refresh_layout(true);
+        let mut v: Vec<u64> = self.layout.changes.iter().copied().collect();
+        v.sort_unstable();
+        v
     }
     pub fn debug_foot_rect(&self) -> Rect {
         self.foot_rect
@@ -4217,6 +4103,9 @@ impl App {
     }
     pub fn is_home(&self) -> bool {
         self.home
+    }
+    pub fn debug_note_open(&self) -> Option<u64> {
+        self.note_edit.as_ref().map(|n| n.block)
     }
     pub fn access(&self) -> &Access {
         &self.access
@@ -4254,6 +4143,12 @@ impl App {
     pub fn debug_open_popover_trash(&mut self) {
         self.popover = Some(Popover::Trash);
         self.popover_frame = self.frame_no;
+    }
+    pub fn debug_hit_rows(&self) -> Vec<(PathBuf, usize, Rect)> {
+        self.hit_rows.clone()
+    }
+    pub fn debug_home_search(&mut self, needle: &str) {
+        self.home_search = needle.to_string();
     }
     pub fn debug_home_order(&self) -> Vec<PathBuf> {
         self.home_order.clone()
@@ -4324,96 +4219,6 @@ fn element_chip(ui: &mut egui::Ui, e: Element, on: bool, chord: &str) -> bool {
 }
 
 const TITLE_MIN_PX: f32 = 16.0;
-
-const INDENT: f32 = 20.0;
-
-fn row_id(path: &Path) -> egui::Id {
-    egui::Id::new(("ns-script-row", path.display().to_string()))
-}
-
-struct HeaderOut {
-    rect: Rect,
-    clicked: bool,
-}
-
-fn section_header(
-    ui: &mut egui::Ui,
-    label: &str,
-    icon: Icon,
-    count: usize,
-    collapsed: &mut bool,
-    tint: Option<Color32>,
-) -> HeaderOut {
-    let p = pal();
-    let w = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 28.0), Sense::click());
-    let hot = anim::ease(ui.ctx(), resp.id, resp.hovered(), anim::HOVER);
-    let col = tint.unwrap_or(p.text_dim);
-    if hot > 0.02 {
-        ui.painter().rect_filled(
-            rect,
-            egui::Rounding::ZERO,
-            theme::wash(if p.dark { p.raised } else { p.sunken }, (255.0 * hot) as u8),
-        );
-    }
-    let turn = anim::to(ui.ctx(), resp.id.with("turn"), if *collapsed { 0.0 } else { 1.0 }, 0.14);
-    icons::draw(
-        ui.painter(),
-        Rect::from_center_size(Pos2::new(rect.left() + 11.0, rect.center().y), Vec2::splat(11.0)),
-        if turn > 0.5 { Icon::ChevronDown } else { Icon::ChevronRight },
-        p.text_faint,
-    );
-    icons::draw(
-        ui.painter(),
-        Rect::from_center_size(Pos2::new(rect.left() + 28.0, rect.center().y), Vec2::splat(13.0)),
-        icon,
-        col,
-    );
-    theme::tracked_text(
-        ui.painter(),
-        Pos2::new(rect.left() + 42.0, rect.center().y),
-        &ui::elide_to_width(ui.ctx(), &label.to_uppercase(), theme::font_hud(theme::T_MICRO + 0.5), 0.8, rect.width() - 90.0),
-        theme::font_hud(theme::T_MICRO + 0.5),
-        theme::mix(p.text_dim, p.text, hot),
-        0.8,
-    );
-    ui.painter().text(
-        Pos2::new(rect.right() - 13.0, rect.center().y),
-        egui::Align2::RIGHT_CENTER,
-        format!("{count:02}"),
-        theme::font_hud(theme::T_MICRO),
-        p.text_faint,
-    );
-    let clicked = resp.clicked();
-    if clicked {
-        *collapsed = !*collapsed;
-    }
-    ui.add_space(3.0);
-    HeaderOut { rect, clicked }
-}
-
-fn draw_branch(ui: &egui::Ui, slot: egui::layers::ShapeIdx, head: Rect, kids: &[Rect], tint: Color32) {
-    if kids.is_empty() {
-        return;
-    }
-    let col = theme::wash(tint, 70);
-    let x = head.left() + 13.0;
-    let last = kids[kids.len() - 1];
-    let mut shapes: Vec<egui::Shape> = vec![egui::Shape::line_segment(
-        [
-            Pos2::new(x, head.bottom() + 1.0),
-            Pos2::new(x, last.center().y),
-        ],
-        Stroke::new(1.0_f32, col),
-    )];
-    for r in kids {
-        shapes.push(egui::Shape::line_segment(
-            [Pos2::new(x, r.center().y), Pos2::new(r.left() - 4.0, r.center().y)],
-            Stroke::new(1.0_f32, col),
-        ));
-    }
-    ui.painter().set(slot, egui::Shape::Vec(shapes));
-}
 
 fn slide_in(ui: &mut egui::Ui, island: Rect, arrive: f32, distance: f32) -> egui::Ui {
     let dy = (1.0 - arrive) * distance;
