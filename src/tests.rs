@@ -1557,3 +1557,54 @@ fn the_pdf_marks_changes_and_can_print_only_the_changed_pages() {
 }
 
 
+
+fn issue<'a>(list: &'a [fountain::Issue], word: &str) -> Option<&'a fountain::Issue> {
+    list.iter().find(|i| i.what.contains(word))
+}
+
+#[test]
+fn a_fountain_import_says_what_it_could_not_keep() {
+    let src = "Title: Odd Bits\nCopyright: 2026 Somebody\n\n# ONE\n\n## The setup\n\nINT. ROOM - DAY #12#\n\n~La la la\n\n>THE CENTRE<\n\n===\n\n/* gone */\n\n.EXT. YARD - NIGHT #13#\n\nShe waits.\n";
+    let (d, issues) = fountain::parse_checked(src);
+    let n = |w: &str| issue(&issues, w).map(|i| i.count).unwrap_or(0);
+    assert_eq!(n("Scene numbers"), 2);
+    assert_eq!(n("Section headings"), 1);
+    assert_eq!(n("Lyrics"), 1);
+    assert_eq!(n("Centred"), 1);
+    assert_eq!(n("Page breaks"), 1);
+    assert_eq!(n("Boneyard"), 1);
+    assert_eq!(n("Copyright"), 1);
+    let lyric = issue(&issues, "Lyrics").unwrap().at.unwrap();
+    assert_eq!(d.blocks[lyric].text, "La la la", "each issue points at the line it is about");
+
+    let (d, issues) = fountain::parse_checked("INT. ROOM - DAY\n\n/* never closed\n\nShe waits.\n");
+    assert!(issue(&issues, "unclosed").is_some());
+    assert!(d.blocks.iter().any(|b| b.text.contains("She waits.")), "an unclosed boneyard no longer eats the rest");
+}
+
+#[test]
+fn a_final_draft_import_says_what_it_could_not_keep() {
+    let fdx = r#"<?xml version="1.0"?><FinalDraft><Content>
+<Paragraph Type="Scene Heading"><Text>INT. ROOM - DAY</Text></Paragraph>
+<Paragraph Type="General"><Text>A general line &#8212; with a dash &amp; more</Text></Paragraph>
+<Paragraph Type="Cast List"><Text>MARIA, JONAS</Text></Paragraph>
+<Paragraph Type="Action"><Text>Plain action.</Text></Paragraph>
+</Content><ScriptNotes><ScriptNote Range="1,5"><Paragraph><Text>check</Text></Paragraph></ScriptNote></ScriptNotes></FinalDraft>"#;
+    let (d, issues) = fountain::parse_fdx_checked(fdx);
+    assert_eq!(issue(&issues, "General").map(|i| i.count), Some(1));
+    assert_eq!(issue(&issues, "Cast List").map(|i| i.count), Some(1));
+    assert_eq!(issue(&issues, "script notes").map(|i| i.count), Some(1));
+    assert!(issue(&issues, "Action").is_none(), "plain action is not a problem");
+    assert_eq!(d.blocks[1].text, "A general line \u{2014} with a dash & more", "character codes decode");
+    assert!(!fountain::parse_fdx_checked("<FinalDraft></FinalDraft>").1.is_empty());
+}
+
+#[test]
+fn blacklines_own_exports_import_with_nothing_to_report() {
+    let mut d = take();
+    d.blocks[3].remark = "softer".into();
+    let (_, issues) = fountain::parse_checked(&export::to_fountain(&d));
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, issues) = fountain::parse_fdx_checked(&export::to_fdx(&d));
+    assert!(issues.is_empty(), "{issues:?}");
+}

@@ -1,5 +1,40 @@
 use crate::model::{Document, Element, Meta};
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Issue {
+    pub what: String,
+    pub count: usize,
+    pub at: Option<usize>,
+}
+
+#[derive(Default)]
+struct Issues(Vec<(String, Issue)>);
+
+impl Issues {
+    fn add(&mut self, key: &str, what: &str, at: Option<usize>) {
+        self.add_many(key, what, at, 1);
+    }
+
+    fn add_many(&mut self, key: &str, what: &str, at: Option<usize>, n: usize) {
+        if n == 0 {
+            return;
+        }
+        match self.0.iter_mut().find(|(k, _)| k == key) {
+            Some((_, i)) => {
+                i.count += n;
+                if i.at.is_none() {
+                    i.at = at;
+                }
+            }
+            None => self.0.push((key.to_string(), Issue { what: what.to_string(), count: n, at })),
+        }
+    }
+
+    fn done(self) -> Vec<Issue> {
+        self.0.into_iter().map(|(_, i)| i).collect()
+    }
+}
+
 const NOTE_OPEN: char = '\u{E000}';
 const NOTE_CLOSE: char = '\u{E001}';
 
@@ -83,11 +118,37 @@ fn attach_notes(doc: &mut Document, pending: &mut Vec<String>) {
 }
 
 pub fn parse(text: &str) -> Document {
+    parse_checked(text).0
+}
+
+fn strip_boneyard(s: &str, issues: &mut Issues) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(a) = rest.find("/*") {
+        out.push_str(&rest[..a]);
+        match rest[a + 2..].find("*/") {
+            Some(b) => {
+                issues.add("boneyard", "Boneyard text (/* … */) left out, as Fountain intends", None);
+                rest = &rest[a + 2 + b + 2..];
+            }
+            None => {
+                issues.add("unclosed", "An unclosed boneyard (/*) would have hidden the rest of the file, so it was ignored", None);
+                out.push_str(&rest[a + 2..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+pub fn parse_checked(text: &str) -> (Document, Vec<Issue>) {
+    let mut issues = Issues::default();
     let marked: Vec<String> = text.lines().map(mark_notes).collect();
-    let text = strip_between(&strip_between(&marked.join("\n"), "/*", "*/"), "[[", "]]");
+    let text = strip_between(&strip_boneyard(&marked.join("\n"), &mut issues), "[[", "]]");
     let lines: Vec<&str> = text.lines().collect();
 
-    let (meta, body_from) = title_page(&lines);
+    let (meta, body_from) = title_page(&lines, &mut issues);
     let mut doc = Document::from_parts(meta, Vec::new());
     doc.blocks.clear();
 
@@ -131,6 +192,11 @@ pub fn parse(text: &str) -> Document {
         }
 
         if let Some(rest) = line.strip_prefix('=') {
+            if rest.starts_with("==") {
+                issues.add("break", "Page breaks (===) left out; Blackline sets its own pages", Some(doc.blocks.len()));
+            } else if !doc.blocks.iter().any(|b| b.element == Element::SceneHeading) {
+                issues.add("synopsis", "A synopsis (=) before the first scene had no card to go on", None);
+            }
             if !rest.starts_with("==") {
                 let note = rest.trim().to_string();
                 if let Some(h) = doc
@@ -153,11 +219,14 @@ pub fn parse(text: &str) -> Document {
         if let Some(rest) = line.strip_prefix('#') {
             if !rest.starts_with('#') {
                 push_act(&mut doc, rest);
+            } else {
+                issues.add("section", "Section headings below the first level (##) left out; Blackline has acts only", Some(doc.blocks.len()));
             }
             prev_blank = false;
             continue;
         }
         if line.chars().all(|c| c == '=') {
+            issues.add("break", "Page breaks (===) left out; Blackline sets its own pages", Some(doc.blocks.len()));
             prev_blank = false;
             continue;
         }
@@ -168,6 +237,7 @@ pub fn parse(text: &str) -> Document {
             continue;
         }
         if line.starts_with('.') && !line.starts_with("..") && line.len() > 1 {
+            note_scene_number(&line[1..], &mut issues, doc.blocks.len());
             doc.push(Element::SceneHeading, &clean_heading(&line[1..]));
             prev_blank = false;
             continue;
@@ -181,6 +251,7 @@ pub fn parse(text: &str) -> Document {
                 if is_act_title(&bare) || same {
                     push_act(&mut doc, &bare);
                 } else if !(in_act && bare.starts_with("END OF ")) {
+                    issues.add("centred", "Centred text (> <) became action", Some(doc.blocks.len()));
                     doc.push(Element::Action, inner.trim());
                 }
             } else {
@@ -198,6 +269,7 @@ pub fn parse(text: &str) -> Document {
 
         let upper = line.to_uppercase();
         if prev_blank && is_heading(&upper) {
+            note_scene_number(line, &mut issues, doc.blocks.len());
             doc.push(Element::SceneHeading, &clean_heading(line));
         } else if prev_blank && next_blank && upper == line && line.ends_with("TO:") {
             doc.push(Element::Transition, line);
@@ -209,6 +281,9 @@ pub fn parse(text: &str) -> Document {
             push_cue(&mut doc, line);
             speaking = true;
         } else {
+            if line.starts_with('~') {
+                issues.add("lyric", "Lyrics (~) became action", Some(doc.blocks.len()));
+            }
             let stripped = line.trim_start_matches('~').trim();
             doc.push(Element::Action, stripped);
         }
@@ -217,9 +292,19 @@ pub fn parse(text: &str) -> Document {
 
     attach_notes(&mut doc, &mut pending);
     settle_notes(&mut doc);
+    if doc.blocks.is_empty() && !text.trim().is_empty() {
+        issues.add("empty", "Nothing in the file read as a script", None);
+    }
     doc.ensure_not_empty();
     doc.reseed_ids();
-    doc
+    (doc, issues.done())
+}
+
+fn note_scene_number(line: &str, issues: &mut Issues, at: usize) {
+    let t = line.trim();
+    if t.strip_suffix('#').and_then(|head| head.rfind('#')).is_some() {
+        issues.add("number", "Scene numbers (#12#) left out; Blackline numbers scenes for you", Some(at));
+    }
 }
 
 fn push_cue(doc: &mut Document, cue: &str) {
@@ -280,7 +365,7 @@ fn strip_between(s: &str, open: &str, close: &str) -> String {
     out
 }
 
-fn title_page(lines: &[&str]) -> (Meta, usize) {
+fn title_page(lines: &[&str], issues: &mut Issues) -> (Meta, usize) {
     let mut meta = Meta::default();
     let first = lines.iter().position(|l| !l.trim().is_empty());
     let Some(first) = first else {
@@ -317,7 +402,14 @@ fn title_page(lines: &[&str]) -> (Meta, usize) {
             "author" | "authors" => Some(&mut meta.author),
             "draft date" | "draft" | "date" => Some(&mut meta.draft),
             "contact" => Some(&mut meta.contact),
-            _ => None,
+            "credit" | "source" => None,
+            other => {
+                if !v.is_empty() {
+                    let name = title_case(&other.to_uppercase());
+                    issues.add(&format!("title:{other}"), &format!("The title page's \u{201c}{name}\u{201d} has no place in Blackline"), None);
+                }
+                None
+            }
         };
         if let Some(t) = target {
             if !v.is_empty() {
@@ -335,12 +427,41 @@ fn title_page(lines: &[&str]) -> (Meta, usize) {
 // final draft here---
 
 fn unescape(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(a) = rest.find('&') {
+        out.push_str(&rest[..a]);
+        let after = &rest[a..];
+        let end = after.find(';').filter(|e| *e <= 10);
+        let decoded = end.and_then(|e| {
+            let name = &after[1..e];
+            let code = match name {
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "amp" => Some('&'),
+                "nbsp" => Some(' '),
+                _ => match name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok().and_then(char::from_u32),
+                    None => name.strip_prefix('#').and_then(|d| d.parse::<u32>().ok()).and_then(char::from_u32),
+                },
+            };
+            code.map(|c| (c, e))
+        });
+        match decoded {
+            Some((c, e)) => {
+                out.push(c);
+                rest = &after[e + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &after[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn texts(s: &str) -> String {
@@ -369,10 +490,19 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 }
 
 pub fn parse_fdx(text: &str) -> Document {
+    parse_fdx_checked(text).0
+}
+
+pub fn parse_fdx_checked(text: &str) -> (Document, Vec<Issue>) {
+    let mut issues = Issues::default();
     let mut doc = Document::from_parts(Meta::default(), Vec::new());
     doc.blocks.clear();
 
     let content = section(text, "<Content>", "</Content>").unwrap_or("");
+    if content.trim().is_empty() {
+        issues.add("empty", "No script body (<Content>) was found in this file", None);
+    }
+    issues.add_many("notes", "Final Draft script notes were not brought over", None, text.matches("<ScriptNote ").count() + text.matches("<ScriptNote>").count());
     let mut rest = content;
     let mut in_dual = false;
     let mut cues_in_dual = 0usize;
@@ -427,6 +557,13 @@ pub fn parse_fdx(text: &str) -> Document {
         if words.is_empty() && summary.is_none() {
             continue;
         }
+        if element == Element::Action && kind != "Action" {
+            let name = if kind.is_empty() { "untyped".to_string() } else { kind.clone() };
+            issues.add(&format!("kind:{name}"), &format!("\u{201c}{name}\u{201d} paragraphs became action"), Some(doc.blocks.len()));
+        }
+        if in_dual && element == Element::Character && cues_in_dual >= 2 {
+            issues.add("dual3", "Dual dialogue with more than two speakers was kept as two", Some(doc.blocks.len()));
+        }
         let text = if element.is_upper() {
             words.to_uppercase()
         } else {
@@ -468,7 +605,7 @@ pub fn parse_fdx(text: &str) -> Document {
 
     doc.ensure_not_empty();
     doc.reseed_ids();
-    doc
+    (doc, issues.done())
 }
 
 fn section<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {

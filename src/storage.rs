@@ -807,22 +807,31 @@ pub fn pick_file_to_import() -> Result<Option<PathBuf>, String> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn import_file(path: &Path) -> Result<Document, String> {
+    import_file_checked(path).map(|(d, _)| d)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn import_file_checked(path: &Path) -> Result<(Document, Vec<crate::fountain::Issue>), String> {
     let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    Ok(import_text(name, &text))
+    Ok(import_text_checked(name, &text))
 }
 
 pub fn import_text(name: &str, text: &str) -> Document {
+    import_text_checked(name, text).0
+}
+
+pub fn import_text_checked(name: &str, text: &str) -> (Document, Vec<crate::fountain::Issue>) {
     let path = Path::new(name);
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    let mut doc = match ext.as_str() {
-        "md" | "markdown" => from_markdown(text),
-        "fdx" => crate::fountain::parse_fdx(text),
-        _ => crate::fountain::parse(text),
+    let (mut doc, issues) = match ext.as_str() {
+        "md" | "markdown" => (from_markdown(text), Vec::new()),
+        "fdx" => crate::fountain::parse_fdx_checked(text),
+        _ => crate::fountain::parse_checked(text),
     };
     if doc.meta.title.trim().is_empty() {
         doc.meta.title = path
@@ -832,5 +841,5 @@ pub fn import_text(name: &str, text: &str) -> Document {
             .replace(['-', '_'], " ");
     }
     doc.normalize();
-    doc
+    (doc, issues)
 }
