@@ -127,6 +127,7 @@ impl App {
             });
         });
         ui.add_space(14.0);
+        self.update_notice(ui, w);
 
         // search here---
         let search = ui.add(
@@ -333,6 +334,50 @@ impl App {
             ui.add_space(12.0);
         }
         picked
+    }
+
+    fn update_notice(&mut self, ui: &mut egui::Ui, w: f32) {
+        self.update_rect = Rect::NOTHING;
+        let crate::update::Status::Newer(release) = self.update.clone() else {
+            return;
+        };
+        if self.settings.dismissed_update == release.version {
+            return;
+        }
+        let p = pal();
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 52.0), Sense::hover());
+        ui.painter().rect_filled(rect, egui::Rounding::same(theme::R_SM), theme::mix(p.solid, p.primary, 0.08));
+        ui.painter().rect_stroke(rect.shrink(0.5), egui::Rounding::same(theme::R_SM), Stroke::new(1.0_f32, p.primary_light));
+        icons::draw(ui.painter(), Rect::from_center_size(Pos2::new(rect.left() + 22.0, rect.center().y), Vec2::splat(14.0)), Icon::Download, p.primary_light);
+        ui.painter().text(
+            Pos2::new(rect.left() + 42.0, rect.center().y - 8.0),
+            egui::Align2::LEFT_CENTER,
+            format!("Blackline {} is out", release.version),
+            theme::font_semi(theme::T_SM),
+            p.text,
+        );
+        ui.painter().text(
+            Pos2::new(rect.left() + 42.0, rect.center().y + 9.0),
+            egui::Align2::LEFT_CENTER,
+            format!("You have {}. Your scripts stay where they are when you update.", env!("CARGO_PKG_VERSION")),
+            theme::font(theme::T_CAP),
+            p.text_faint,
+        );
+        let mut buttons = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect.shrink2(Vec2::new(12.0, 0.0)))
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        if ui::icon_button(&mut buttons, Icon::Close, "Not now · this version won't come up again", 26.0) {
+            self.settings.dismissed_update = release.version.clone();
+            self.save_settings();
+        }
+        buttons.add_space(4.0);
+        if ui::button(&mut buttons, "Download", Some(Icon::External), true) {
+            self.store.open_url(&crate::update::releases_latest(crate::INFO.repo));
+        }
+        self.update_rect = rect;
+        ui.add_space(14.0);
     }
 
     pub(super) fn open_from_home(&mut self, path: PathBuf) {

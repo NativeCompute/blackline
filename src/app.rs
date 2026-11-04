@@ -202,6 +202,7 @@ pub struct App {
     left_rows: Vec<(u64, Rect)>,
     report: crate::report::Report,
     report_tab: usize,
+    update_rect: Rect,
     imported: Option<imported::Imported>,
     report_rows: Vec<(u64, Rect)>,
     library_button: Rect,
@@ -331,6 +332,7 @@ impl App {
             left_rows: Vec::new(),
             report: crate::report::Report::default(),
             report_tab: 0,
+            update_rect: Rect::NOTHING,
             imported: None,
             report_rows: Vec::new(),
             library_button: Rect::NOTHING,
@@ -3889,6 +3891,7 @@ impl App {
         }
 
         if let Some(splash) = self.splash.as_mut() {
+            splash.set_status(self.update.clone());
             if splash.show(ctx) {
                 if self.frame_no < 3 {
                     crate::splash::centre(ctx, crate::splash::CARD);
@@ -4048,6 +4051,12 @@ impl App {
     }
     pub fn debug_focus_mode(&mut self, on: bool) {
         self.focus_mode = on;
+    }
+    pub fn debug_set_update(&mut self, status: crate::update::Status) {
+        self.update = status;
+    }
+    pub fn debug_update_rect(&self) -> Rect {
+        self.update_rect
     }
     pub fn debug_library_button(&self) -> Rect {
         self.library_button

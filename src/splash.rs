@@ -9,6 +9,10 @@ impl Default for Splash {
 }
 
 impl Splash {
+    pub fn set_status(&mut self, status: crate::update::Status) {
+        self.0.set_status(status);
+    }
+
     pub fn show(&mut self, ctx: &eframe::egui::Context) -> bool {
         self.0.show(ctx)
     }
