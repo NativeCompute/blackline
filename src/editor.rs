@@ -4,7 +4,7 @@ use eframe::egui::{self, text::CCursor, Key, Modifiers, Pos2, Rect, Sense, Vec2}
 
 use crate::anim;
 use crate::caret;
-use crate::model::{act_title, base_character, complete, guess_element, Document, Element, PAGE_COLS};
+use crate::model::{act_title, base_character, complete, guess_element, Document, Element, DUAL_COLS, DUAL_RIGHT, PAGE_COLS};
 use crate::theme::{self, pal};
 
 pub const GUTTER: f32 = 74.0;
@@ -29,6 +29,7 @@ pub struct EditorState {
     seen: std::collections::HashSet<u64>,
     heights: HashMap<u64, f32>,
     pub fresh: bool,
+    pub note_request: Option<u64>,
 }
 
 impl Default for EditorState {
@@ -42,6 +43,7 @@ impl Default for EditorState {
             seen: Default::default(),
             heights: Default::default(),
             fresh: true,
+            note_request: None,
         }
     }
 }
@@ -80,6 +82,13 @@ pub struct View<'a> {
     pub element_colors: bool,
     pub char_colors: Option<&'a HashMap<String, egui::Color32>>,
     pub pages: usize,
+    pub margin: f32,
+    pub labels: &'a [String],
+    pub changed: &'a std::collections::HashSet<u64>,
+}
+
+fn label_of(view: &View, n: usize) -> String {
+    view.labels.get(n.wrapping_sub(1)).cloned().unwrap_or_else(|| n.to_string())
 }
 
 pub fn set_element(doc: &mut Document, st: &mut EditorState, element: Element) -> bool {
@@ -109,6 +118,30 @@ enum Act {
     Explode { id: u64 },
     Accept { id: u64, rest: String },
     Stay { id: u64, at: usize },
+}
+
+#[derive(Clone, Copy)]
+struct Geo {
+    outer: bool,
+    first: bool,
+    lead: f32,
+    origin: f32,
+    left: f32,
+    right: f32,
+    tags: bool,
+    hop: bool,
+}
+
+fn keep_remark(into: &mut crate::model::Block, from: &crate::model::Block) {
+    let extra = from.remark.trim();
+    if extra.is_empty() {
+        return;
+    }
+    if into.remark.trim().is_empty() {
+        into.remark = extra.to_string();
+    } else {
+        into.remark = format!("{} / {extra}", into.remark.trim());
+    }
 }
 
 pub fn block_id(b: u64) -> egui::Id {
@@ -167,7 +200,7 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, st: &mut EditorState, view: &
 
 #[allow(clippy::too_many_arguments)]
 fn page_body(
-    ui: &mut egui::Ui,
+    outer: &mut egui::Ui,
     doc: &mut Document,
     st: &mut EditorState,
     view: &View,
@@ -179,7 +212,7 @@ fn page_body(
 ) -> bool {
     let p = pal();
     let mut changed = false;
-    let col = ui.max_rect();
+    let col = outer.max_rect();
     let content_left = col.left();
     let mut any_focus = false;
 
@@ -190,8 +223,72 @@ fn page_body(
     let needle = view.find.map(|s| s.to_lowercase()).filter(|s| !s.is_empty());
     let act_notes = act_notes(doc, view.page_starts, view.pages);
     let mut speaker: Option<String> = None;
+    let pairs = doc.dual_pairs();
+    let mut cols: Option<(egui::Ui, egui::Ui, usize, usize, f32)> = None;
+    let x0 = content_left + GUTTER;
+    let dual_w = DUAL_COLS as f32 * char_w;
+    let rx = x0 + DUAL_RIGHT as f32 * char_w;
 
     for i in 0..doc.blocks.len() {
+        // dual pair opens here---
+        if let Some(pair) = pairs.iter().find(|p| p.left == i).copied() {
+            if view.page_breaks {
+                if let Some(n) = (pair.left..pair.end).find_map(|k| view.page_starts.get(&doc.blocks[k].id)) {
+                    page_rule(outer, content_left + GUTTER, col.right() - 10.0, &label_of(view, *n));
+                }
+            }
+            if i > 0 {
+                outer.add_space(Element::Character.blank_lines_before() as f32 * row_h * 0.62 + 2.0);
+            }
+            let top = outer.cursor().top();
+            let mk = |outer: &mut egui::Ui, x: f32| {
+                outer.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(Rect::from_min_size(Pos2::new(x, top), Vec2::new(dual_w + 4.0, 100_000.0)))
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                )
+            };
+            let left_ui = mk(outer, x0);
+            let right_ui = mk(outer, rx);
+            cols = Some((left_ui, right_ui, pair.right, pair.end, top));
+        }
+        let geo = match &cols {
+            Some((_, _, right, _, _)) if i < *right => Geo {
+                outer: false,
+                first: i + 1 == 1 || doc.blocks[i].element == Element::Character,
+                lead: 0.0,
+                origin: x0,
+                left: content_left + 2.0,
+                right: x0 + dual_w + 6.0,
+                tags: true,
+                hop: i + 1 == *right,
+            },
+            Some((_, _, _, end, _)) if i < *end => Geo {
+                outer: false,
+                first: doc.blocks[i].element == Element::Character,
+                lead: 0.0,
+                origin: rx,
+                left: rx - 6.0,
+                right: col.right(),
+                tags: false,
+                hop: false,
+            },
+            _ => Geo {
+                outer: true,
+                first: false,
+                lead: GUTTER,
+                origin: x0,
+                left: content_left + 2.0,
+                right: col.right(),
+                tags: true,
+                hop: false,
+            },
+        };
+        let ui: &mut egui::Ui = match cols.as_mut() {
+            Some((l, _, right, _, _)) if i < *right => l,
+            Some((_, r, _, end, _)) if i < *end => r,
+            _ => &mut *outer,
+        };
         let bid = doc.blocks[i].id;
         let element = doc.blocks[i].element;
         match element {
@@ -212,14 +309,14 @@ fn page_body(
         let dimmed = view.focus_mode && live_scene.is_some() && in_scene != live_scene;
 
         // printed page begins here---
-        if view.page_breaks {
+        if view.page_breaks && geo.outer {
             if let Some(n) = view.page_starts.get(&bid) {
-                page_rule(ui, content_left + GUTTER, col.right() - 10.0, *n);
+                page_rule(ui, content_left + GUTTER, col.right() - 10.0, &label_of(view, *n));
             }
         }
 
         // vertical rhythm between here---
-        if i > 0 {
+        if i > 0 && !geo.first {
             ui.add_space(element.blank_lines_before() as f32 * row_h * 0.62 + 2.0);
         }
 
@@ -249,6 +346,8 @@ fn page_body(
                         at: split_at,
                         same: !is_act,
                     });
+                } else if geo.hop && pos == Some(len) && inp.consume_key(Modifiers::NONE, Key::Enter) {
+                    acts.push(Act::FocusNext { id: bid });
                 } else if inp.consume_key(Modifiers::NONE, Key::Enter) {
                     acts.push(Act::Split {
                         id: bid,
@@ -303,8 +402,13 @@ fn page_body(
 
         // row here---
         let bg_idx = ui.painter().add(egui::Shape::Noop);
-        let indent_px = element.indent_cols() as f32 * char_w;
-        let width_px = element.width_cols() as f32 * char_w;
+        let (indent_cols, width_cols) = if geo.outer {
+            (element.indent_cols(), element.width_cols())
+        } else {
+            (element.dual_indent(), element.dual_width())
+        };
+        let indent_px = indent_cols as f32 * char_w;
+        let width_px = width_cols as f32 * char_w;
         let ink = match voice {
             Some(v) if element == Element::Parenthetical => theme::mix(v, p.text_dim, 0.35),
             Some(v) => v,
@@ -315,7 +419,7 @@ fn page_body(
         let row_top = ui.cursor().top();
         let lay_row = |ui: &mut egui::Ui, doc: &mut Document| {
             ui.horizontal(|ui| {
-                ui.add_space(GUTTER + indent_px);
+                ui.add_space(geo.lead + indent_px);
                 let block = &mut doc.blocks[i];
                 egui::TextEdit::multiline(&mut block.text)
                     .id(id)
@@ -345,13 +449,14 @@ fn page_body(
         } else if opening {
             let known = st.heights.get(&bid).copied().unwrap_or(row_h + 2.0);
             let grow = anim::bounce(raw);
+            let wide = ui.max_rect().width();
             let (slot, _) = ui.allocate_exact_size(
-                Vec2::new(col.width(), (known * grow).max(0.0)),
+                Vec2::new(wide, (known * grow).max(0.0)),
                 Sense::hover(),
             );
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
-                    .max_rect(Rect::from_min_size(slot.min, Vec2::new(col.width(), known.max(row_h) + 40.0)))
+                    .max_rect(Rect::from_min_size(slot.min, Vec2::new(wide, known.max(row_h) + 40.0)))
                     .layout(egui::Layout::top_down(egui::Align::Min)),
             );
             child.set_clip_rect(slot.intersect(ui.clip_rect()));
@@ -388,7 +493,7 @@ fn page_body(
         let mut under: Vec<egui::Shape> = Vec::new();
         if view.element_colors && !dimmed && element != Element::Act {
             let words = output.galley.rect.translate(output.galley_pos.to_vec2());
-            let text_left = content_left + GUTTER + indent_px;
+            let text_left = geo.origin + indent_px;
             let right = if doc.blocks[i].text.is_empty() {
                 text_left + char_w * 8.0
             } else {
@@ -396,7 +501,7 @@ fn page_body(
             };
             let band = Rect::from_min_max(
                 Pos2::new(text_left - 7.0, row.top() - 1.5),
-                Pos2::new((right + 7.0).min(col.right() - 2.0), row.bottom() + 1.5),
+                Pos2::new((right + 7.0).min(geo.right - 2.0), row.bottom() + 1.5),
             );
             let (fill, tick) = match voice {
                 Some(v) => (theme::tint(v, if p.dark { 0.035 } else { 0.05 }), v),
@@ -416,8 +521,8 @@ fn page_body(
         }
         if lit > 0.01 && element != Element::Act {
             let plate = Rect::from_min_max(
-                Pos2::new(content_left + 2.0, row.top() - 6.0),
-                Pos2::new(col.right(), row.bottom() + 6.0),
+                Pos2::new(geo.left, row.top() - 6.0),
+                Pos2::new(geo.right, row.bottom() + 6.0),
             );
             under.push(theme::grad_poly_shape(
                 &theme::rounded_poly(plate, theme::R_CARD),
@@ -516,7 +621,7 @@ fn page_body(
             }
         } else {
             let tag = anim::ease(ui.ctx(), ("ns-tag", bid), focused || response.hovered(), anim::HOVER);
-            if tag > 0.02 {
+            if tag > 0.02 && geo.tags {
                 let color = theme::element_color(element);
                 theme::tracked_text(
                     ui.painter(),
@@ -527,6 +632,63 @@ fn page_body(
                     0.9,
                 );
             }
+        }
+
+        // revision asterisk here---
+        if view.changed.contains(&bid) {
+            ui.painter().text(
+                Pos2::new(col.right() - 30.0, mid_y),
+                egui::Align2::CENTER_CENTER,
+                "*",
+                theme::font_page_bold(row_h * 0.9),
+                theme::wash(p.text, if dimmed { 90 } else { 255 }),
+            );
+        }
+
+        // note in the margin here---
+        let remark = doc.blocks[i].remark.trim().to_string();
+        let mut wants_note = false;
+        response.context_menu(|ui| {
+            let label = if remark.is_empty() { "Add a note" } else { "Edit the note" };
+            if crate::ui::menu_item(ui, &mut Vec::new(), label, crate::icons::Icon::Pencil, false) {
+                wants_note = true;
+                ui.close_menu();
+            }
+        });
+        if !remark.is_empty() && element != Element::Act {
+            let dot = Rect::from_center_size(Pos2::new(col.right() - 12.0, mid_y), Vec2::splat(16.0));
+            let hit = ui.interact(dot, egui::Id::new(("ns-note", bid)), Sense::click());
+            let hot = anim::ease(ui.ctx(), hit.id, hit.hovered(), anim::HOVER);
+            ui.painter().rect_filled(
+                Rect::from_center_size(dot.center(), Vec2::splat(7.0 + 2.0 * hot)),
+                egui::Rounding::same(1.5),
+                theme::mix(p.primary, p.primary_light, hot),
+            );
+            if hit.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if view.margin >= 170.0 {
+                let wrap_w = (view.margin - 34.0).min(260.0);
+                let galley = ui.painter().layout(
+                    remark.clone(),
+                    theme::font(theme::T_SM),
+                    theme::wash(p.text_dim, if dimmed { 90 } else { 230 }),
+                    wrap_w,
+                );
+                let at = Pos2::new(col.right() + 18.0, row.top());
+                ui.painter().rect_filled(
+                    Rect::from_min_size(Pos2::new(at.x - 9.0, at.y + 2.0), Vec2::new(2.0, galley.rect.height().max(row_h) - 4.0)),
+                    egui::Rounding::same(1.0),
+                    theme::wash(p.primary, 140),
+                );
+                ui.painter().galley(at, galley, p.text_dim);
+            }
+            if hit.on_hover_text(&remark).clicked() {
+                wants_note = true;
+            }
+        }
+        if wants_note {
+            st.note_request = Some(bid);
         }
 
         // deferred focus here---
@@ -553,14 +715,34 @@ fn page_body(
                 }
             }
         }
+
+        // dual pair closes here---
+        if let Some((l, r, _, end, top)) = &cols {
+            if i + 1 == *end {
+                let bottom = l.min_rect().bottom().max(r.min_rect().bottom()).max(*top);
+                let top = *top;
+                cols = None;
+                outer.allocate_exact_size(Vec2::new(col.width(), bottom - top), Sense::hover());
+                let bracket = Rect::from_min_max(Pos2::new(content_left + 8.0, top + 2.0), Pos2::new(content_left + 10.0, bottom - 2.0));
+                outer.painter().rect_filled(bracket, egui::Rounding::same(1.0), theme::wash(p.primary_light, 120));
+                theme::tracked_text(
+                    outer.painter(),
+                    Pos2::new(content_left + 16.0, top + row_h * 0.5),
+                    "DUAL",
+                    theme::font_semi(theme::T_MICRO - 1.0),
+                    theme::wash(p.primary_light, 200),
+                    0.9,
+                );
+            }
+        }
     }
 
     if !any_focus && st.focus_block.and_then(|id| doc.index_of(id)).is_none() {
         st.focus_block = doc.blocks.last().map(|b| b.id);
     }
 
-    let filler = ui.allocate_response(
-        egui::vec2(ui.available_width().max(1.0), 90.0),
+    let filler = outer.allocate_response(
+        egui::vec2(outer.available_width().max(1.0), 90.0),
         Sense::click(),
     );
     if filler.clicked() {
@@ -756,7 +938,7 @@ fn scene_star(ui: &egui::Ui, c: Pos2, bid: u64, live: bool, dimmed: bool) {
     );
 }
 
-fn page_rule(ui: &mut egui::Ui, x0: f32, x1: f32, page: usize) {
+fn page_rule(ui: &mut egui::Ui, x0: f32, x1: f32, page: &str) {
     let p = pal();
     ui.add_space(6.0);
     let (slot, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 18.0), Sense::hover());
@@ -842,6 +1024,9 @@ fn apply(doc: &mut Document, st: &mut EditorState, act: Act) -> bool {
                 return false;
             }
             doc.blocks[i].element = element;
+            if element != Element::Character {
+                doc.blocks[i].dual = false;
+            }
             if element.is_upper() {
                 let upper = doc.blocks[i].text.to_uppercase();
                 doc.blocks[i].text = upper;
@@ -862,13 +1047,15 @@ fn apply(doc: &mut Document, st: &mut EditorState, act: Act) -> bool {
             let prev_len = caret::char_len(&doc.blocks[i - 1].text);
 
             if cur_empty {
-                doc.blocks.remove(i);
+                let cur = doc.blocks.remove(i);
+                keep_remark(&mut doc.blocks[i - 1], &cur);
                 st.focus(prev_id, Caret::At(prev_len));
                 doc.ensure_not_empty();
                 true
             } else if same_kind {
                 let cur = doc.blocks.remove(i);
                 doc.blocks[i - 1].text.push_str(&cur.text);
+                keep_remark(&mut doc.blocks[i - 1], &cur);
                 st.focus(prev_id, Caret::At(prev_len));
                 true
             } else {
@@ -889,6 +1076,7 @@ fn apply(doc: &mut Document, st: &mut EditorState, act: Act) -> bool {
                 let next = doc.blocks.remove(i + 1);
                 let at = caret::char_len(&doc.blocks[i].text);
                 doc.blocks[i].text.push_str(&next.text);
+                keep_remark(&mut doc.blocks[i], &next);
                 st.focus(id, Caret::At(at));
                 true
             } else {

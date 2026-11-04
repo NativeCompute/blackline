@@ -3,7 +3,7 @@ use std::io;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 
-use crate::model::{act_title, end_of, wrap, Document, Element, LINES_PER_PAGE, PAGE_COLS};
+use crate::model::{act_title, end_of, wrap, Document, Element, DUAL_RIGHT, LINES_PER_PAGE, PAGE_COLS};
 use crate::storage;
 
 #[derive(Clone, Debug)]
@@ -13,6 +13,8 @@ pub struct Line {
     pub element: Option<Element>,
     pub block: Option<u64>,
     pub scene: Option<usize>,
+    pub right: Option<Box<Line>>,
+    pub dual: bool,
 }
 
 impl Line {
@@ -31,7 +33,13 @@ impl Line {
             element: None,
             block: None,
             scene: None,
+            right: None,
+            dual: false,
         }
+    }
+
+    pub fn is_blank(&self) -> bool {
+        self.text.trim().is_empty() && self.right.as_ref().map(|r| r.text.trim().is_empty()).unwrap_or(true)
     }
 }
 
@@ -43,7 +51,7 @@ fn centred(text: &str, block: Option<u64>) -> Vec<Line> {
             text: l,
             element: Some(Element::Act),
             block,
-            scene: None,
+            ..Line::blank()
         })
         .collect()
 }
@@ -63,13 +71,72 @@ fn close_act(out: &mut Vec<Line>, title: &str) {
     out.extend(centred(&end_of(title), None));
 }
 
+fn body_of(e: Element, text: &str) -> String {
+    if e == Element::Parenthetical {
+        let inner = text.trim_matches(|c| c == '(' || c == ')').trim();
+        format!("({})", inner)
+    } else if e.is_upper() {
+        text.to_uppercase()
+    } else {
+        text.to_string()
+    }
+}
+
+fn column(doc: &Document, from: usize, to: usize, offset: usize) -> Vec<Line> {
+    let mut out = Vec::new();
+    for block in &doc.blocks[from..to] {
+        let text = block.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let e = block.element;
+        for l in wrap(&body_of(e, text), e.dual_width()) {
+            out.push(Line {
+                indent: offset + e.dual_indent(),
+                text: l,
+                element: Some(e),
+                block: Some(block.id),
+                ..Line::blank()
+            });
+        }
+    }
+    out
+}
+
 pub fn compose(doc: &Document) -> Vec<Line> {
     let mut out: Vec<Line> = Vec::new();
     let mut scene_no = 0usize;
     let mut act: Option<String> = None;
     let mut act_no = 0usize;
+    let pairs = doc.dual_pairs();
 
-    for block in &doc.blocks {
+    let mut i = 0usize;
+    while i < doc.blocks.len() {
+        let block = &doc.blocks[i];
+        if let Some(pair) = pairs.iter().find(|p| p.left == i) {
+            let left = column(doc, pair.left, pair.right, 0);
+            let right = column(doc, pair.right, pair.end, DUAL_RIGHT);
+            if !left.is_empty() || !right.is_empty() {
+                if !out.is_empty() {
+                    for _ in 0..Element::Character.blank_lines_before() {
+                        out.push(Line::blank());
+                    }
+                }
+                let anchor = left.first().or(right.first()).and_then(|l| l.block);
+                for k in 0..left.len().max(right.len()) {
+                    let mut row = left.get(k).cloned().unwrap_or_else(|| Line {
+                        block: anchor,
+                        ..Line::blank()
+                    });
+                    row.right = right.get(k).cloned().map(Box::new);
+                    row.dual = true;
+                    out.push(row);
+                }
+            }
+            i = pair.end;
+            continue;
+        }
+        i += 1;
         if block.element == Element::SceneHeading {
             scene_no += 1;
         }
@@ -95,16 +162,7 @@ pub fn compose(doc: &Document) -> Vec<Line> {
             }
         }
 
-        let body = if e == Element::Parenthetical {
-            let inner = text.trim_matches(|c| c == '(' || c == ')').trim();
-            format!("({})", inner)
-        } else if e.is_upper() {
-            text.to_uppercase()
-        } else {
-            text.to_string()
-        };
-
-        for (k, l) in wrap(&body, e.width_cols()).into_iter().enumerate() {
+        for (k, l) in wrap(&body_of(e, text), e.width_cols()).into_iter().enumerate() {
             out.push(Line {
                 indent: e.indent_cols(),
                 text: l,
@@ -115,6 +173,7 @@ pub fn compose(doc: &Document) -> Vec<Line> {
                 } else {
                     None
                 },
+                ..Line::blank()
             });
         }
     }
@@ -131,7 +190,30 @@ pub fn paginate(lines: &[Line]) -> Vec<Vec<Line>> {
     let mut speaker: Option<String> = None;
 
     for (i, line) in lines.iter().enumerate() {
+        if line.dual {
+            speaker = None;
+            let opens = i == 0 || !lines[i - 1].dual;
+            if opens {
+                let rows = lines[i..].iter().take_while(|l| l.dual).count();
+                let used = page.len();
+                if used > 0 && used + rows > LINES_PER_PAGE && rows <= LINES_PER_PAGE {
+                    while page.last().map(|l| l.is_blank()).unwrap_or(false) {
+                        page.pop();
+                    }
+                    let mut carry: Vec<Line> = Vec::new();
+                    while page.len() > 4
+                        && page.last().map(|l| !l.dual).unwrap_or(false)
+                        && matches!(page.last().and_then(|l| l.element), Some(Element::Character) | Some(Element::Parenthetical))
+                    {
+                        carry.insert(0, page.pop().unwrap());
+                    }
+                    pages.push(std::mem::take(&mut page));
+                    page = carry;
+                }
+            }
+        }
         match line.element {
+            _ if line.dual => {}
             Some(Element::Character) if line.block.is_some() => {
                 let first = i == 0 || lines[i - 1].block != line.block;
                 if first {
@@ -142,7 +224,7 @@ pub fn paginate(lines: &[Line]) -> Vec<Vec<Line>> {
             _ if line.text.trim().is_empty() => {}
             _ => speaker = None,
         }
-        if page.is_empty() && line.text.trim().is_empty() {
+        if page.is_empty() && line.is_blank() {
             continue;
         }
         let opens_act = line.is_act_title() && (i == 0 || lines[i - 1].block != line.block);
@@ -162,12 +244,13 @@ pub fn paginate(lines: &[Line]) -> Vec<Vec<Line>> {
                 page.last().and_then(|l| l.element),
                 Some(Element::Character) | Some(Element::Parenthetical)
             ) && page.len() > 4
+                && page.last().map(|l| !l.dual).unwrap_or(false)
             {
                 carry.insert(0, page.pop().unwrap());
             }
             let next = carry.first().or_else(|| lines.get(i + 1));
             let runs_on = carry.is_empty()
-                && page.last().map(|l| l.element == Some(Element::Dialogue)).unwrap_or(false)
+                && page.last().map(|l| l.element == Some(Element::Dialogue) && !l.dual).unwrap_or(false)
                 && next
                     .map(|l| matches!(l.element, Some(Element::Dialogue) | Some(Element::Parenthetical)))
                     .unwrap_or(false);
@@ -214,8 +297,7 @@ fn layout_cue(text: String) -> Line {
         indent: Element::Character.indent_cols(),
         text,
         element: Some(Element::Character),
-        block: None,
-        scene: None,
+        ..Line::blank()
     }
 }
 
@@ -255,6 +337,134 @@ fn carry_into_next(prev: &mut Vec<Line>) -> Vec<Line> {
 
 pub fn page_count(doc: &Document) -> usize {
     paginate(&compose(doc)).len()
+}
+
+pub fn letter_suffix(n: usize) -> String {
+    let mut n = n;
+    let mut out = String::new();
+    loop {
+        out.insert(0, (b'A' + (n % 26) as u8) as char);
+        if n < 26 {
+            break;
+        }
+        n = n / 26 - 1;
+    }
+    out
+}
+
+fn line_ids(l: &Line) -> impl Iterator<Item = u64> + '_ {
+    [l.block, l.right.as_ref().and_then(|r| r.block)].into_iter().flatten()
+}
+
+pub fn page_has(page: &[Line], ids: &std::collections::HashSet<u64>) -> bool {
+    page.iter().any(|l| line_ids(l).any(|id| ids.contains(&id)))
+}
+
+fn speaking(l: &Line) -> bool {
+    matches!(l.element, Some(Element::Dialogue) | Some(Element::Parenthetical)) && !l.dual
+}
+
+pub fn layout(doc: &Document, lock: Option<&Document>) -> Vec<(String, Vec<Line>)> {
+    let lines = compose(doc);
+    let Some(base) = lock else {
+        return paginate(&lines).into_iter().enumerate().map(|(i, p)| ((i + 1).to_string(), p)).collect();
+    };
+    let map = crate::revision::pairs(base, doc);
+    let mut pos: HashMap<(u64, usize), usize> = HashMap::new();
+    let mut seen: HashMap<u64, usize> = HashMap::new();
+    for (i, l) in lines.iter().enumerate() {
+        if let Some(b) = l.block {
+            let n = seen.entry(b).or_insert(0);
+            pos.insert((b, *n), i);
+            *n += 1;
+        }
+    }
+    let mut base_seen: HashMap<u64, usize> = HashMap::new();
+    let mut cuts: Vec<(usize, usize)> = Vec::new();
+    let mut last_known: Option<usize> = None;
+    for (k, page) in paginate(&compose(base)).iter().enumerate() {
+        let mut first: Option<Option<usize>> = None;
+        let mut later: Option<usize> = None;
+        let mut known: Option<usize> = None;
+        for l in page {
+            let Some(b) = l.block else {
+                continue;
+            };
+            let n = base_seen.entry(b).or_insert(0);
+            let here = map.get(&b).and_then(|now| pos.get(&(*now, *n)).copied());
+            *n += 1;
+            if first.is_none() {
+                first = Some(here);
+            }
+            if later.is_none() {
+                later = here;
+            }
+            if here.is_some() {
+                known = here;
+            }
+        }
+        if k > 0 {
+            let anchor = match first {
+                Some(Some(i)) => Some(i),
+                _ => last_known.map(|i| i + 1).or(later),
+            };
+            if let Some(i) = anchor {
+                if i < lines.len() && cuts.last().map(|c| i > c.1).unwrap_or(i > 0) {
+                    cuts.push((k + 1, i));
+                }
+            }
+        }
+        if known.is_some() {
+            last_known = known;
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut number = 1usize;
+    let mut carry_cue: Option<Line> = None;
+    let mut bounds: Vec<(usize, usize, usize)> = Vec::new();
+    for (n, at) in &cuts {
+        bounds.push((number, start, *at));
+        number = *n;
+        start = *at;
+    }
+    bounds.push((number, start, lines.len()));
+    for (n, from, to) in bounds {
+        let mut seg: Vec<Line> = Vec::new();
+        if let Some(cue) = carry_cue.take() {
+            seg.push(cue);
+        }
+        seg.extend_from_slice(&lines[from..to]);
+        let breaks_speech = to < lines.len() && to > 0 && speaking(&lines[to]) && speaking(&lines[to - 1]);
+        let mut more = false;
+        if breaks_speech {
+            let cue = lines[..to]
+                .iter()
+                .rev()
+                .take_while(|l| l.element.is_some() && !l.dual)
+                .find(|l| l.element == Some(Element::Character))
+                .map(|l| cue_without_contd(&l.text));
+            if let Some(cue) = cue {
+                more = true;
+                carry_cue = Some(layout_cue(format!("{cue} {CONTD}")));
+            }
+        }
+        let mut sheets = paginate(&seg);
+        if more {
+            if let Some(last) = sheets.last_mut() {
+                last.push(layout_cue(MORE.to_string()));
+            }
+        }
+        for (k, page) in sheets.into_iter().enumerate() {
+            let label = if k == 0 { n.to_string() } else { format!("{n}{}", letter_suffix(k - 1)) };
+            out.push((label, page));
+        }
+    }
+    if out.is_empty() {
+        out.push(("1".to_string(), Vec::new()));
+    }
+    out
 }
 
 #[allow(dead_code)]
@@ -326,16 +536,29 @@ pub fn to_plain_text(doc: &Document) -> String {
             s.push_str("\n\n");
         }
         for line in page {
-            if line.text.trim().is_empty() {
+            if line.is_blank() {
                 s.push('\n');
             } else {
-                s.push_str(&" ".repeat(line.indent));
-                s.push_str(&line.text);
+                s.push_str(&plain_row(line));
                 s.push('\n');
             }
         }
     }
     s
+}
+
+pub fn plain_row(line: &Line) -> String {
+    let mut row = String::new();
+    if !line.text.trim().is_empty() {
+        row.push_str(&" ".repeat(line.indent));
+        row.push_str(&line.text);
+    }
+    if let Some(r) = &line.right {
+        let at = row.chars().count();
+        row.push_str(&" ".repeat(r.indent.saturating_sub(at).max(if at > 0 { 1 } else { 0 })));
+        row.push_str(&r.text);
+    }
+    row.trim_end().to_string()
 }
 
 // fountain here---
@@ -379,22 +602,28 @@ pub fn to_fountain(doc: &Document) -> String {
         if text.is_empty() {
             continue;
         }
+        let n = if b.remark.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" [[{}]]", b.remark.trim().replace("]]", "] ]"))
+        };
         match b.element {
             Element::SceneHeading => {
-                s.push_str(&format!("\n.{}\n\n", text.to_uppercase()));
+                s.push_str(&format!("\n.{}{n}\n\n", text.to_uppercase()));
                 if !b.note.trim().is_empty() {
                     s.push_str(&format!("= {}\n\n", b.note.trim()));
                 }
             }
-            Element::Shot => s.push_str(&format!("\n{}\n\n", text.to_uppercase())),
-            Element::Action => s.push_str(&format!("{}\n\n", text)),
-            Element::Character => s.push_str(&format!("@{}\n", text.to_uppercase())),
+            Element::Shot => s.push_str(&format!("\n{}{n}\n\n", text.to_uppercase())),
+            Element::Action => s.push_str(&format!("{}{n}\n\n", text)),
+            Element::Character if b.dual => s.push_str(&format!("@{} ^{n}\n", text.to_uppercase())),
+            Element::Character => s.push_str(&format!("@{}{n}\n", text.to_uppercase())),
             Element::Parenthetical => {
                 let inner = text.trim_matches(|c| c == '(' || c == ')').trim();
-                s.push_str(&format!("({})\n", inner));
+                s.push_str(&format!("({}){n}\n", inner));
             }
-            Element::Dialogue => s.push_str(&format!("{}\n\n", text)),
-            Element::Transition => s.push_str(&format!("> {}\n\n", text.to_uppercase())),
+            Element::Dialogue => s.push_str(&format!("{}{n}\n\n", text)),
+            Element::Transition => s.push_str(&format!("> {}{n}\n\n", text.to_uppercase())),
             Element::Act => {}
         }
     }
@@ -440,6 +669,12 @@ pub struct PdfOptions {
     pub scene_numbers: bool,
     pub pages: Option<Vec<usize>>,
     pub voices: Option<HashMap<String, Ink>>,
+    pub notes: bool,
+    pub changed: std::collections::HashSet<u64>,
+    pub revision: Option<(String, [u8; 3])>,
+    pub lock: Option<Box<Document>>,
+    pub changed_only: bool,
+    pub tint: bool,
 }
 
 impl Default for PdfOptions {
@@ -449,6 +684,12 @@ impl Default for PdfOptions {
             scene_numbers: false,
             pages: None,
             voices: None,
+            notes: false,
+            changed: std::collections::HashSet::new(),
+            revision: None,
+            lock: None,
+            changed_only: false,
+            tint: false,
         }
     }
 }
@@ -456,17 +697,51 @@ impl Default for PdfOptions {
 #[derive(Clone, Debug)]
 pub struct PlannedPage {
     pub number: usize,
+    pub label: String,
+    pub revised: bool,
     pub lines: Vec<(Line, Option<Ink>)>,
+    pub right_inks: Vec<Option<Ink>>,
 }
 
 pub fn pdf_plan(doc: &Document, opts: &PdfOptions) -> Vec<PlannedPage> {
-    let pages = paginate(&compose(doc));
+    let pages = layout(doc, opts.lock.as_deref());
     let mut who: Option<String> = None;
+    let mut left_who: Option<String> = None;
+    let mut right_who: Option<String> = None;
     let mut out = Vec::new();
-    for (i, page) in pages.iter().enumerate() {
+    let ink_of = |who: &Option<String>, line: &Line| match (&opts.voices, who) {
+        (Some(v), Some(n)) if line.element.is_some() => v.get(n).copied(),
+        _ => None,
+    };
+    let track = |who: &mut Option<String>, line: &Line| {
+        if line.element == Some(Element::Character) {
+            let n = crate::model::base_character(&line.text);
+            if !n.is_empty() {
+                *who = Some(n);
+            }
+        }
+    };
+    for (i, (label, page)) in pages.iter().enumerate() {
         let number = i + 1;
+        let revised = page_has(page, &opts.changed);
         let mut lines = Vec::with_capacity(page.len());
+        let mut right_inks = Vec::with_capacity(page.len());
         for line in page {
+            if line.dual {
+                who = None;
+                track(&mut left_who, line);
+                let left_ink = ink_of(&left_who, line);
+                let right_ink = line.right.as_ref().and_then(|r| {
+                    track(&mut right_who, r);
+                    ink_of(&right_who, r)
+                });
+                lines.push((line.clone(), left_ink));
+                right_inks.push(right_ink);
+                continue;
+            }
+            left_who = None;
+            right_who = None;
+            right_inks.push(None);
             match line.element {
                 Some(Element::Character) => {
                     let n = crate::model::base_character(&line.text);
@@ -483,9 +758,9 @@ pub fn pdf_plan(doc: &Document, opts: &PdfOptions) -> Vec<PlannedPage> {
             };
             lines.push((line.clone(), ink));
         }
-        let wanted = opts.pages.as_ref().map(|w| w.contains(&number)).unwrap_or(true);
+        let wanted = opts.pages.as_ref().map(|w| w.contains(&number)).unwrap_or(true) && (!opts.changed_only || revised);
         if wanted {
-            out.push(PlannedPage { number, lines });
+            out.push(PlannedPage { number, label: label.clone(), revised, lines, right_inks });
         }
     }
     out
@@ -537,10 +812,40 @@ pub fn parse_page_range(text: &str, max: usize) -> Result<Vec<usize>, String> {
     Ok(out)
 }
 
+pub fn endnotes(doc: &Document) -> Vec<(bool, String)> {
+    let pages = paginate(&compose(doc));
+    let page_of = |id: u64| {
+        pages
+            .iter()
+            .position(|pg| pg.iter().any(|l| l.block == Some(id) || l.right.as_ref().map(|r| r.block == Some(id)).unwrap_or(false)))
+            .map(|k| k + 1)
+    };
+    let mut rows: Vec<(bool, String)> = Vec::new();
+    for b in &doc.blocks {
+        let note = b.remark.trim();
+        if note.is_empty() {
+            continue;
+        }
+        if rows.is_empty() {
+            rows.push((true, "NOTES".into()));
+            rows.push((false, String::new()));
+        }
+        let line: String = b.text.trim().chars().take(44).collect();
+        let more = if b.text.trim().chars().count() > 44 { "…" } else { "" };
+        let at = page_of(b.id).map(|p| format!("PAGE {p}")).unwrap_or_else(|| "PAGE ?".into());
+        rows.push((true, format!("{at} — {line}{more}")));
+        for l in wrap(note, PAGE_COLS - 4) {
+            rows.push((false, format!("    {l}")));
+        }
+        rows.push((false, String::new()));
+    }
+    rows
+}
+
 pub fn page_of_block(doc: &Document, id: u64) -> Option<usize> {
     paginate(&compose(doc))
         .iter()
-        .position(|pg| pg.iter().any(|l| l.block == Some(id)))
+        .position(|pg| pg.iter().any(|l| l.block == Some(id) || l.right.as_ref().and_then(|r| r.block) == Some(id)))
         .map(|k| k + 1)
 }
 
@@ -631,26 +936,51 @@ pub fn pdf_bytes(doc: &Document, opts: &PdfOptions) -> Result<Vec<u8>, String> {
 
     // body here---
     for page in &plan {
-        let i = page.number - 1;
-        let (page_idx, layer_idx) = next_sheet(format!("Page {}", page.number));
+        let (page_idx, layer_idx) = next_sheet(format!("Page {}", page.label));
         let layer = pdf.get_page(page_idx).get_layer(layer_idx);
+        if let (true, true, Some((_, [r, g, b]))) = (opts.tint, page.revised, &opts.revision) {
+            layer.set_fill_color(Color::Rgb(Rgb::new(*r as f32 / 255.0, *g as f32 / 255.0, *b as f32 / 255.0, None)));
+            layer.add_rect(printpdf::Rect::new(Mm(0.0), Mm(0.0), Mm(PAGE_W_MM), Mm(PAGE_H_MM)).with_mode(printpdf::path::PaintMode::Fill));
+        }
         layer.set_fill_color(colour(None));
 
-        if i > 0 {
-            let num = format!("{}.", i + 1);
+        let head_y = PAGE_H_MM - 12.7 - LINE_H_MM;
+        let right_edge = LEFT_MARGIN_MM + PAGE_COLS as f32 * CHAR_W_MM;
+        let mut head_x = right_edge;
+        if page.label != "1" {
+            let num = format!("{}.", page.label);
             let cols = num.chars().count() as f32;
-            let x = LEFT_MARGIN_MM + (PAGE_COLS as f32 - cols) * CHAR_W_MM;
-            let y = PAGE_H_MM - 12.7 - LINE_H_MM;
-            layer.use_text(&num, 12.0, Mm(x), Mm(y), &courier);
+            head_x = LEFT_MARGIN_MM + (PAGE_COLS as f32 - cols) * CHAR_W_MM;
+            layer.use_text(&num, 12.0, Mm(head_x), Mm(head_y), &courier);
+        }
+        if let (true, Some((text, _))) = (page.revised, &opts.revision) {
+            let w = (text.chars().count() as f32 + 4.0) * CHAR_W_MM;
+            layer.use_text(text, 12.0, Mm(head_x - w), Mm(head_y), &courier);
         }
 
         let mut inked: Option<Ink> = None;
         for (row, (line, ink)) in page.lines.iter().enumerate() {
+            let y = PAGE_H_MM - TOP_MARGIN_MM - (row as f32 + 1.0) * LINE_H_MM;
+            if let Some(r) = line.right.as_ref().filter(|r| !r.text.trim().is_empty()) {
+                let rink = page.right_inks.get(row).copied().flatten();
+                if rink != inked {
+                    layer.set_fill_color(colour(rink));
+                    inked = rink;
+                }
+                let rx = LEFT_MARGIN_MM + r.indent as f32 * CHAR_W_MM;
+                layer.use_text(&r.text, 12.0, Mm(rx), Mm(y), &courier);
+            }
+            if line_ids(line).any(|id| opts.changed.contains(&id)) {
+                if inked.is_some() {
+                    layer.set_fill_color(colour(None));
+                    inked = None;
+                }
+                layer.use_text("*", 12.0, Mm(right_edge + 12.0), Mm(y), &courier);
+            }
             if line.text.trim().is_empty() {
                 continue;
             }
             let x = LEFT_MARGIN_MM + line.indent as f32 * CHAR_W_MM;
-            let y = PAGE_H_MM - TOP_MARGIN_MM - (row as f32 + 1.0) * LINE_H_MM;
             let bold = matches!(line.element, Some(Element::SceneHeading) | Some(Element::Act));
             if opts.scene_numbers {
                 if let Some(n) = line.scene {
@@ -692,6 +1022,23 @@ pub fn pdf_bytes(doc: &Document, opts: &PdfOptions) -> Result<Vec<u8>, String> {
         }
     }
 
+    // endnotes here---
+    if opts.notes {
+        let rows = endnotes(doc);
+        for (k, sheet) in rows.chunks(LINES_PER_PAGE).enumerate() {
+            let (page_idx, layer_idx) = next_sheet(format!("Notes {}", k + 1));
+            let layer = pdf.get_page(page_idx).get_layer(layer_idx);
+            layer.set_fill_color(colour(None));
+            for (row, (bold, text)) in sheet.iter().enumerate() {
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let y = PAGE_H_MM - TOP_MARGIN_MM - (row as f32 + 1.0) * LINE_H_MM;
+                layer.use_text(text, 12.0, Mm(LEFT_MARGIN_MM), Mm(y), if *bold { &courier_bold } else { &courier });
+            }
+        }
+    }
+
     let mut writer = io::BufWriter::new(Vec::new());
     pdf.save(&mut writer).map_err(|e| e.to_string())?;
     writer.into_inner().map_err(|e| e.to_string())
@@ -719,7 +1066,14 @@ pub fn to_fdx(doc: &Document) -> String {
             xml(&end_of(title))
         ));
     };
-    for b in &doc.blocks {
+    let pairs = doc.dual_pairs();
+    for (i, b) in doc.blocks.iter().enumerate() {
+        if pairs.iter().any(|p| p.left == i) {
+            s.push_str("    <Paragraph>\n      <DualDialogue>\n");
+        }
+        if pairs.iter().any(|p| p.end == i) {
+            s.push_str("      </DualDialogue>\n    </Paragraph>\n");
+        }
         let text = b.text.trim();
         if b.element == Element::Act {
             act_no += 1;
@@ -763,6 +1117,9 @@ pub fn to_fdx(doc: &Document) -> String {
         }
         s.push_str(&format!("      <Text>{}</Text>\n", xml(&body)));
         s.push_str("    </Paragraph>\n");
+    }
+    if pairs.iter().any(|p| p.end == doc.blocks.len()) {
+        s.push_str("      </DualDialogue>\n    </Paragraph>\n");
     }
     if let Some(t) = act {
         end_act(&mut s, &t);

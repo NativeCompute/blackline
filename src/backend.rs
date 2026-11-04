@@ -141,7 +141,7 @@ impl Access {
 
 #[derive(Debug)]
 pub enum Load {
-    Ready(Document, Access),
+    Ready(Box<Document>, Access),
     Pending,
     Failed(String),
 }
@@ -206,6 +206,9 @@ pub trait Store {
     fn delete(&mut self, key: &Path) -> Result<(), String>;
     fn set_starred(&mut self, key: &Path, on: bool) -> Result<(), String>;
     fn request_edit(&mut self, _key: &Path) {}
+    fn search(&mut self, _needle: &str) -> Option<Vec<crate::storage::Found>> {
+        None
+    }
 
     // snapshots history here---
 
@@ -307,9 +310,13 @@ mod local {
             }
         }
 
+        fn search(&mut self, needle: &str) -> Option<Vec<storage::Found>> {
+            Some(storage::search_scripts(needle, 3))
+        }
+
         fn load(&mut self, key: &Path) -> Load {
             match storage::load(key) {
-                Ok(doc) => Load::Ready(doc, Access::Edit),
+                Ok(doc) => Load::Ready(Box::new(doc), Access::Edit),
                 Err(e) => Load::Failed(e.to_string()),
             }
         }

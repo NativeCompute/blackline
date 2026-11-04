@@ -79,6 +79,11 @@ pub struct Settings {
     pub show_library: bool,
     pub show_scenes: bool,
     pub show_cast: bool,
+    pub beat_guides: bool,
+    pub pdf_tint: bool,
+    pub dismissed_update: String,
+    pub onboarded: String,
+    pub fresh: bool,
     pub page_px: f32,
     pub page_breaks: bool,
     pub scene_numbers: bool,
@@ -98,6 +103,7 @@ pub struct Settings {
     pub pdf_title_page: bool,
     pub pdf_scene_numbers: bool,
     pub pdf_character_colors: bool,
+    pub pdf_notes: bool,
     pub keys: crate::keys::Keymap,
 }
 
@@ -116,6 +122,11 @@ impl Default for Settings {
             show_library: true,
             show_scenes: true,
             show_cast: false,
+            beat_guides: true,
+            pdf_tint: false,
+            dismissed_update: String::new(),
+            onboarded: String::new(),
+            fresh: true,
             page_px: 16.0,
             page_breaks: true,
             scene_numbers: false,
@@ -134,6 +145,7 @@ impl Default for Settings {
             pdf_title_page: true,
             pdf_scene_numbers: false,
             pdf_character_colors: false,
+            pdf_notes: false,
             keys: crate::keys::Keymap::default(),
         }
     }
@@ -170,7 +182,12 @@ impl Settings {
              check_updates = {}\n\
              pdf_title_page = {}\n\
              pdf_scene_numbers = {}\n\
-             pdf_character_colors = {}\n",
+             pdf_character_colors = {}\n\
+             pdf_notes = {}\n\
+             beat_guides = {}\n\
+             pdf_tint = {}\n\
+             dismissed_update = {}\n\
+             onboarded = {}\n",
             b(self.light_mode),
             b(self.animations),
             self.font_scale,
@@ -198,6 +215,11 @@ impl Settings {
             b(self.pdf_title_page),
             b(self.pdf_scene_numbers),
             b(self.pdf_character_colors),
+            b(self.pdf_notes),
+            b(self.beat_guides),
+            b(self.pdf_tint),
+            self.dismissed_update.trim(),
+            self.onboarded.trim(),
         ) + if self.custom_colors {
             "character_colors_mode = custom\n"
         } else {
@@ -206,7 +228,7 @@ impl Settings {
     }
 
     pub fn parse(text: &str) -> Settings {
-        let mut s = Settings::default();
+        let mut s = Settings { fresh: false, ..Default::default() };
         let yes = |v: &str| matches!(v, "yes" | "true" | "1" | "on");
         let mut pdf_numbers_said = false;
         for line in text.lines() {
@@ -231,6 +253,10 @@ impl Settings {
                 "show_library" => s.show_library = yes(v),
                 "show_scenes" => s.show_scenes = yes(v),
                 "show_cast" => s.show_cast = yes(v),
+                "beat_guides" => s.beat_guides = yes(v),
+                "pdf_tint" => s.pdf_tint = yes(v),
+                "dismissed_update" => s.dismissed_update = v.trim().to_string(),
+                "onboarded" => s.onboarded = v.trim().to_string(),
                 "page_px" => s.page_px = v.parse::<f32>().unwrap_or(16.0).clamp(11.0, 26.0),
                 "page_breaks" => s.page_breaks = yes(v),
                 "scene_numbers" => s.scene_numbers = yes(v),
@@ -253,6 +279,7 @@ impl Settings {
                     pdf_numbers_said = true;
                 }
                 "pdf_character_colors" => s.pdf_character_colors = yes(v),
+                "pdf_notes" => s.pdf_notes = yes(v),
                 "check_updates" => s.check_updates = yes(v),
                 "youtrack_url" => {
                     s.youtrack_url = v.to_string()

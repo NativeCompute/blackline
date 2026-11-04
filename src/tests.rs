@@ -388,7 +388,7 @@ fn the_pdf_can_carry_scene_numbers() {
 
 #[test]
 fn settings_round_trip_and_old_look_keys_are_ignored() {
-    let mut s = Settings::default();
+    let mut s = Settings { fresh: false, ..Default::default() };
     assert!(!s.light_mode, "dark by default");
     s.light_mode = true;
     s.sort_by = SortBy::Length;
@@ -675,6 +675,8 @@ fn a_pdf_of_some_pages_has_just_those_pages() {
             pages: Some(vec![2]),
             voices: Some(inks),
             scene_numbers: true,
+            notes: false,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -1103,4 +1105,519 @@ fn the_app_icon_is_drawn_from_the_mark() {
     assert_eq!(ico[6 + 16 * 5], 0, "the last is 256 px, written as 0");
     let shipped = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/packaging/blackline.ico")).unwrap();
     assert_eq!(shipped, ico, "packaging/blackline.ico is regenerated from the mark");
+}
+
+// blue pages format here---
+
+const A_BLUE_PAGES_FILE: &str = "---\ntitle: Crossfire\nauthor: Sam\ncontact: \ndraft: Blue\nstorylines: 0=Maria; 2=The heist\nrevision: blue\nrevision_date: 2026-11-04\nrevision_base: 2026-11-04_10-00-00.md\nlocked: yes\n---\n\n## INT. KITCHEN - NIGHT [[too dark?]]\n<!-- scene: tint=2 | They argue. -->\n\nThe kettle screams. [[cut the kettle]]\n\n**MARIA**\n\n> I said stop.\n\n**JONAS ^ [[louder]]**\n\n*(over her [[maybe cut]])*\n\n> I'm not stopping!\n\n### ON THE KETTLE [[insert]]\n\n`CUT TO: [[or SMASH CUT]]`\n\n# ACT TWO [[midpoint]]\n\n";
+
+#[test]
+fn every_blue_pages_marker_round_trips_exactly() {
+    let d = storage::from_markdown(A_BLUE_PAGES_FILE);
+    let cue = d.blocks.iter().find(|b| b.text == "JONAS").expect("the dual cue keeps its name");
+    assert!(cue.dual);
+    assert_eq!(cue.remark, "louder");
+    assert!(!d.blocks.iter().find(|b| b.text == "MARIA").unwrap().dual);
+    let heading = &d.blocks[0];
+    assert_eq!(heading.text, "INT. KITCHEN - NIGHT");
+    assert_eq!(heading.remark, "too dark?");
+    assert_eq!(heading.note, "They argue.");
+    assert_eq!(heading.tint, Some(2));
+    let paren = d.blocks.iter().find(|b| b.element == Element::Parenthetical).unwrap();
+    assert_eq!(paren.text, "(over her)");
+    assert_eq!(paren.remark, "maybe cut");
+    assert_eq!(d.blocks.iter().find(|b| b.element == Element::Transition).unwrap().remark, "or SMASH CUT");
+    assert_eq!(d.meta.storyline(2), Some("The heist"));
+    assert_eq!(d.meta.revision, Some(0));
+    assert!(d.meta.revising() && d.meta.locked);
+    assert_eq!(storage::to_markdown(&d), A_BLUE_PAGES_FILE);
+}
+
+#[test]
+fn text_that_only_looks_like_a_marker_is_left_exactly_as_it_was() {
+    let lookalikes = [
+        "Two spaces before  [[this]] stay text.",
+        "Glued[[on]] stays text.",
+        "Odd [[a]] b]] stays text.",
+        "Padded [[ inside ]] stays text.",
+        "[[only a bracket]]",
+        "**BOB^**",
+        "**BOB  ^**",
+        "> She says [[nothing]]",
+    ];
+    for line in lookalikes {
+        let file = format!("---\ntitle: T\nauthor: \ncontact: \ndraft: \n---\n\n## INT. X - DAY\n\n{line}\n\n");
+        let d = storage::from_markdown(&file);
+        assert_eq!(storage::to_markdown(&d), file, "{line:?} must re-save unchanged");
+    }
+    let d = storage::from_markdown("**BOB^**\n");
+    assert!(!d.blocks[0].dual, "a caret glued to the name is not a dual marker");
+}
+
+#[test]
+fn a_script_without_the_new_things_writes_none_of_them() {
+    let mut d = sample();
+    d.normalize();
+    let md = storage::to_markdown(&d);
+    for key in ["storylines:", "revision", "locked:", "[[", " ^**"] {
+        assert!(!md.contains(key), "{key} must only appear once it is used");
+    }
+    d.meta.set_storyline(1, "  ");
+    d.blocks[1].remark = "   ".into();
+    assert_eq!(storage::to_markdown(&d), md, "blank names and notes write nothing");
+}
+
+// dual dialogue here---
+
+fn argument() -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.meta.title = "Crossfire".into();
+    d.push(Element::SceneHeading, "INT. KITCHEN - NIGHT");
+    d.push(Element::Action, "They face each other across the table.");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "I said stop. I said it twice and you kept going anyway.");
+    d.push(Element::Character, "JONAS");
+    d.push(Element::Parenthetical, "(over her)");
+    d.push(Element::Dialogue, "I'm not stopping!");
+    d.push(Element::Action, "Silence.");
+    d.reseed_ids();
+    d
+}
+
+#[test]
+fn two_speeches_pair_and_unpair() {
+    let mut d = argument();
+    assert!(d.dual_pairs().is_empty());
+    let jonas = d.blocks[4].id;
+    assert_eq!(d.toggle_dual(jonas), Ok(true));
+    assert_eq!(d.dual_pairs(), vec![crate::model::DualPair { left: 2, right: 4, end: 7 }]);
+    let maria_line = d.blocks[3].id;
+    assert_eq!(d.toggle_dual(maria_line), Ok(false), "either speech can unpair them");
+    assert!(d.dual_pairs().is_empty());
+    let maria = d.blocks[2].id;
+    assert_eq!(d.toggle_dual(maria), Ok(true), "from the first speech it pairs with the next");
+    assert!(d.blocks[4].dual);
+    let silence = d.blocks[7].id;
+    assert!(d.toggle_dual(silence).is_err(), "action is not a speech");
+}
+
+#[test]
+fn a_dual_pair_prints_side_by_side_on_shared_rows() {
+    let mut d = argument();
+    d.blocks[4].dual = true;
+    let lines = export::compose(&d);
+    let rows: Vec<&export::Line> = lines.iter().filter(|l| l.dual).collect();
+    assert_eq!(rows[0].text, "MARIA");
+    assert_eq!(rows[0].indent, Element::Character.dual_indent());
+    let right = rows[0].right.as_ref().expect("JONAS sits on the same row");
+    assert_eq!(right.text, "JONAS");
+    assert_eq!(right.indent, crate::model::DUAL_RIGHT + Element::Character.dual_indent());
+    assert!(rows.iter().all(|l| l.text.chars().count() <= crate::model::DUAL_COLS));
+    let left_rows = 1 + crate::model::wrap("I said stop. I said it twice and you kept going anyway.", crate::model::DUAL_COLS).len();
+    assert_eq!(rows.len(), left_rows.max(3), "the pair is as tall as the taller speech");
+    let text = export::to_plain_text(&d);
+    assert!(text.lines().any(|l| l.contains("MARIA") && l.contains("JONAS")), "{text}");
+    let single = export::compose(&argument()).len();
+    assert!(lines.len() < single, "side by side takes fewer rows than one after the other");
+}
+
+#[test]
+fn a_dual_pair_is_never_split_across_pages() {
+    for filler in 40..56 {
+        let mut d = argument();
+        d.blocks.truncate(2);
+        for k in 0..filler {
+            d.push(Element::Action, &format!("Beat {k}."));
+        }
+        d.push(Element::Character, "MARIA");
+        d.push(Element::Dialogue, "One. Two. Three. Four. Five. Six. Seven. Eight. Nine. Ten.");
+        d.push(Element::Character, "JONAS");
+        d.push(Element::Dialogue, "Ten. Nine. Eight. Seven. Six. Five. Four. Three. Two. One.");
+        let n = d.blocks.len();
+        d.blocks[n - 2].dual = true;
+        d.reseed_ids();
+        let pages = export::paginate(&export::compose(&d));
+        let holding: Vec<usize> = pages
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.iter().any(|l| l.dual))
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(holding.len(), 1, "with {filler} beats the pair landed on pages {holding:?}");
+        assert!(pages.iter().all(|p| p.len() <= crate::model::LINES_PER_PAGE));
+    }
+}
+
+#[test]
+fn dual_dialogue_survives_fountain_and_final_draft() {
+    let mut d = argument();
+    d.blocks[4].dual = true;
+    let f = export::to_fountain(&d);
+    assert!(f.contains("@JONAS ^"), "{f}");
+    let back = crate::fountain::parse(&f);
+    assert_eq!(back.dual_pairs().len(), 1, "{f}");
+    let x = export::to_fdx(&d);
+    assert!(x.contains("<DualDialogue>"));
+    let back = crate::fountain::parse_fdx(&x);
+    assert_eq!(back.dual_pairs().len(), 1);
+    assert!(
+        !back.blocks.iter().any(|b| b.element == Element::Action && b.text == "MARIA"),
+        "the wrapper is not read as a line of action"
+    );
+    assert_eq!(back.blocks.len(), d.blocks.len());
+}
+
+// script notes here---
+
+#[test]
+fn notes_ride_through_fountain_on_every_kind_of_line() {
+    let mut d = argument();
+    d.blocks[1].remark = "shorter".into();
+    d.blocks[4].dual = true;
+    d.blocks[4].remark = "louder".into();
+    d.blocks[5].remark = "maybe cut".into();
+    let f = export::to_fountain(&d);
+    assert!(f.contains("@JONAS ^ [[louder]]"), "{f}");
+    assert!(f.contains("(over her) [[maybe cut]]"), "{f}");
+    let back = crate::fountain::parse(&f);
+    let kinds: Vec<Element> = back.blocks.iter().map(|b| b.element).collect();
+    assert_eq!(kinds, d.blocks.iter().map(|b| b.element).collect::<Vec<_>>(), "{f}");
+    let remarks: Vec<&str> = back.blocks.iter().map(|b| b.remark.as_str()).collect();
+    assert_eq!(remarks, d.blocks.iter().map(|b| b.remark.as_str()).collect::<Vec<_>>());
+    assert!(back.blocks[4].dual);
+    assert!(back.blocks.iter().all(|b| !b.text.contains("[[")));
+}
+
+#[test]
+fn a_fountain_note_on_its_own_line_belongs_to_the_line_before() {
+    let f = "INT. HOUSE - DAY\n\nShe waits.\n[[too quiet?]]\n\nHe knocks.\n\n[[multi\nline note]]\nGone.\n";
+    let d = crate::fountain::parse(f);
+    let waits = d.blocks.iter().find(|b| b.text == "She waits.").unwrap();
+    assert_eq!(waits.remark, "too quiet?");
+    assert!(d.blocks.iter().all(|b| !b.text.contains("too quiet")));
+    assert!(d.blocks.iter().all(|b| !b.text.contains("line note")), "notes across lines are still left out");
+}
+
+#[test]
+fn the_pdf_can_list_every_note_with_its_page() {
+    let mut d = argument();
+    d.blocks[1].remark = "the kettle".into();
+    let rows = export::endnotes(&d);
+    assert_eq!(rows[0], (true, "NOTES".to_string()));
+    assert!(rows.iter().any(|(bold, t)| *bold && t.starts_with("PAGE 1 — They face")));
+    assert!(rows.iter().any(|(_, t)| t.trim() == "the kettle"));
+    let with = export::pdf_bytes(&d, &export::PdfOptions { notes: true, ..Default::default() }).unwrap();
+    let without = export::pdf_bytes(&d, &export::PdfOptions::default()).unwrap();
+    assert!(with.len() > without.len());
+    assert!(export::endnotes(&argument()).is_empty(), "no notes, no notes page");
+}
+
+fn take() -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.push(Element::SceneHeading, "INT. KITCHEN - NIGHT");
+    d.push(Element::Action, "Rain on the glass.");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "I said stop.");
+    d.push(Element::Action, "Silence.");
+    d.reseed_ids();
+    d
+}
+
+#[test]
+fn a_revision_marks_only_what_moved() {
+    let base = take();
+    assert!(crate::revision::changed(&base, &base).is_empty());
+
+    let mut now = base.clone();
+    now.blocks[3].text = "I said  stop. ".into();
+    assert!(crate::revision::changed(&base, &now).is_empty(), "spacing alone is not a change");
+
+    now.blocks[3].text = "I said stop. Now.".into();
+    let edited = now.blocks[3].id;
+    assert_eq!(crate::revision::changed(&base, &now), [edited].into_iter().collect());
+
+    let mut now = base.clone();
+    let mut thunder = now.blocks[1].clone();
+    thunder.id = 99;
+    thunder.text = "Thunder.".into();
+    now.blocks.insert(2, thunder);
+    assert_eq!(crate::revision::changed(&base, &now), [99].into_iter().collect());
+
+    let mut now = base.clone();
+    let after = now.blocks[2].id;
+    now.blocks.remove(1);
+    assert_eq!(crate::revision::changed(&base, &now), [after].into_iter().collect(), "a cut marks the line after it");
+
+    let mut now = base.clone();
+    now.blocks.pop();
+    let last = now.blocks.last().unwrap().id;
+    assert_eq!(crate::revision::changed(&base, &now), [last].into_iter().collect(), "a cut at the end marks the line before");
+
+    let mut now = base.clone();
+    now.blocks[3].element = Element::Action;
+    let moved = now.blocks[3].id;
+    assert_eq!(crate::revision::changed(&base, &now), [moved].into_iter().collect(), "a new element type counts");
+}
+
+#[test]
+fn searching_inside_a_script_reads_lines_and_notes() {
+    let mut d = take();
+    d.blocks[3].remark = "Make the stop land harder".into();
+    d.blocks[1].text = format!("{} Rain on the roof. {}", "word ".repeat(30), "word ".repeat(30));
+    let text = storage::to_markdown(&d);
+
+    let (hits, total) = storage::find_in(&text, "STOP", 5);
+    assert_eq!(total, 2, "the line and its note");
+    assert_eq!((hits[0].block, hits[0].note), (3, false));
+    assert_eq!((hits[1].block, hits[1].note), (3, true));
+    let first: String = hits[0].line.chars().skip(hits[0].start).take(hits[0].len).collect();
+    assert_eq!(first, "stop");
+
+    let (hits, _) = storage::find_in(&text, "rain  on the", 5);
+    assert_eq!(hits.len(), 1);
+    let long = &hits[0];
+    assert_eq!(long.block, 1);
+    assert!(long.line.starts_with('…') && long.line.ends_with('…'), "{}", long.line);
+    let found: String = long.line.chars().skip(long.start).take(long.len).collect();
+    assert_eq!(found, "Rain on the");
+
+    let (hits, total) = storage::find_in(&text, "o", 1);
+    assert_eq!(hits.len(), 1);
+    assert!(total > 1);
+    assert!(storage::find_in(&text, "", 5).0.is_empty());
+    assert!(storage::find_in(&text, "nowhere at all", 5).0.is_empty());
+}
+
+#[test]
+fn scene_headings_split_into_side_place_and_time() {
+    use crate::report::split_heading;
+    let s = |a: &str, b: &str, c: &str| (a.to_string(), b.to_string(), c.to_string());
+    assert_eq!(split_heading("INT. KITCHEN - NIGHT"), s("INT.", "KITCHEN", "NIGHT"));
+    assert_eq!(split_heading("ext.  rooftop - day"), s("EXT.", "ROOFTOP", "DAY"));
+    assert_eq!(split_heading("INT./EXT. CAR - MOVING - DAWN"), s("INT./EXT.", "CAR - MOVING", "DAWN"));
+    assert_eq!(split_heading("I/E. PORCH - LATER"), s("INT./EXT.", "PORCH", "LATER"));
+    assert_eq!(split_heading("MONTAGE"), s("", "MONTAGE", ""));
+}
+
+#[test]
+fn the_reports_count_what_is_on_the_page() {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.push(Element::SceneHeading, "INT. KITCHEN - NIGHT");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "One two three four.");
+    d.push(Element::Character, "JONAS (V.O.)");
+    d.push(Element::Parenthetical, "(quiet)");
+    d.push(Element::Dialogue, "Five six.");
+    d.push(Element::SceneHeading, "EXT. ROOF - NIGHT");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "Seven eight.");
+    d.push(Element::SceneHeading, "INT. KITCHEN - DAY");
+    d.push(Element::Action, "Empty.");
+    d.reseed_ids();
+    let r = crate::report::build(&d);
+
+    assert_eq!(r.speakers.len(), 2);
+    let maria = &r.speakers[0];
+    assert_eq!((maria.name.as_str(), maria.cues, maria.lines, maria.words, maria.scenes, maria.first_scene, maria.first_page), ("MARIA", 2, 2, 6, 2, 1, 1));
+    let jonas = &r.speakers[1];
+    assert_eq!((jonas.name.as_str(), jonas.cues, jonas.words), ("JONAS", 1, 2));
+    assert!((maria.share - 0.75).abs() < 1e-4 && (jonas.share - 0.25).abs() < 1e-4);
+
+    let lengths = export::scene_lengths(&d);
+    assert_eq!(r.scenes.len(), 3);
+    for (row, (id, page, eighths)) in r.scenes.iter().zip(&lengths) {
+        assert_eq!((row.id, row.page, row.eighths), (*id, *page, *eighths), "the same figures as the printed layout");
+    }
+    assert_eq!(r.scenes[0].cast, vec!["MARIA".to_string(), "JONAS".to_string()]);
+
+    let kitchen = r.places.iter().find(|p| p.name == "KITCHEN").unwrap();
+    assert_eq!((kitchen.scenes, kitchen.sides.clone()), (2, vec!["INT.".to_string()]));
+    assert_eq!(kitchen.eighths, r.scenes[0].eighths + r.scenes[2].eighths);
+    let night = r.times.iter().find(|t| t.name == "NIGHT").unwrap();
+    assert_eq!(night.scenes, 2);
+    assert_eq!(r.times.iter().map(|t| t.eighths).sum::<usize>(), r.eighths);
+
+    let text = r.text(0, "Test");
+    assert!(text.starts_with("Test · Characters\n\nCHARACTER"), "{text}");
+    assert!(text.contains("MARIA      2     2      6      75%"), "{text}");
+    assert!(r.text(2, "Test").contains("KITCHEN"));
+}
+
+#[test]
+fn beat_guides_land_on_the_usual_pages() {
+    let beats = crate::cards::beat_pages(110 * 8);
+    let pages: Vec<usize> = beats.iter().map(|b| b.2).collect();
+    assert_eq!(pages, vec![12, 28, 56, 83, 100]);
+    assert_eq!(beats[2].0, "Midpoint");
+    assert_eq!(crate::cards::beat_pages(0).iter().map(|b| b.2).collect::<Vec<_>>(), vec![1; 5]);
+
+    let spans = vec![(0, 8), (8, 4), (12, 20)];
+    assert_eq!(crate::cards::beat_scene(&spans, 32, 0.10), Some(0));
+    assert_eq!(crate::cards::beat_scene(&spans, 32, 0.30), Some(1));
+    assert_eq!(crate::cards::beat_scene(&spans, 32, 0.90), Some(2));
+}
+
+fn long_take(scenes: usize) -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    for n in 0..scenes {
+        d.push(Element::SceneHeading, &format!("INT. ROOM {n} - NIGHT"));
+        d.push(Element::Action, "The radiator ticks. Somebody counts the money twice and still gets a different number each time.");
+        d.push(Element::Character, if n % 2 == 0 { "MARIA" } else { "JONAS" });
+        d.push(Element::Dialogue, &"Tell me again how this ends, and this time leave out the part where we get away with it. ".repeat(3));
+    }
+    d.reseed_ids();
+    d
+}
+
+fn page_text(p: &[export::Line]) -> Vec<String> {
+    p.iter().map(|l| l.text.clone()).collect()
+}
+
+#[test]
+fn letters_for_added_pages_run_a_to_z_then_double() {
+    assert_eq!(export::letter_suffix(0), "A");
+    assert_eq!(export::letter_suffix(1), "B");
+    assert_eq!(export::letter_suffix(25), "Z");
+    assert_eq!(export::letter_suffix(26), "AA");
+}
+
+#[test]
+fn locked_pages_match_the_base_until_something_changes() {
+    let base = long_take(14);
+    let plain = export::paginate(&export::compose(&base));
+    assert!(plain.len() >= 5, "a few pages to lock: {}", plain.len());
+    assert!(
+        plain.iter().any(|p| p.iter().any(|l| l.text == export::MORE)),
+        "some speech should run over a page so the lock has to carry it"
+    );
+    let locked = export::layout(&base, Some(&base));
+    assert_eq!(locked.len(), plain.len());
+    for (k, ((label, page), want)) in locked.iter().zip(&plain).enumerate() {
+        assert_eq!(label, &(k + 1).to_string());
+        assert_eq!(page_text(page), page_text(want), "page {} differs", k + 1);
+    }
+}
+
+#[test]
+fn material_added_to_a_locked_page_goes_onto_a_pages() {
+    let base = long_take(14);
+    let plain = export::paginate(&export::compose(&base));
+    let mut now = base.clone();
+    let on_two = plain[1].iter().find_map(|l| l.block.filter(|id| now.block(*id).map(|b| b.element == Element::Action).unwrap_or(false))).unwrap();
+    let at = now.index_of(on_two).unwrap();
+    let mut extra = now.blocks[at].clone();
+    extra.id = 9000;
+    extra.text = "A long new beat. ".repeat(60);
+    now.blocks.insert(at + 1, extra);
+
+    let locked = export::layout(&now, Some(&base));
+    let labels: Vec<&str> = locked.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.contains(&"2A"), "{labels:?}");
+    let three = labels.iter().position(|l| *l == "3").expect("page 3 keeps its number");
+    assert_eq!(page_text(&locked[three].1), page_text(&plain[2]), "page 3 is untouched");
+    assert_eq!(labels.last().copied(), Some(plain.len().to_string().as_str()), "{labels:?}");
+
+    let mut cut = base.clone();
+    let gone = plain[3].iter().find_map(|l| l.block).unwrap();
+    cut.blocks.retain(|b| b.id != gone);
+    let locked = export::layout(&cut, Some(&base));
+    let labels: Vec<String> = locked.iter().map(|(l, _)| l.clone()).collect();
+    assert!(labels.iter().all(|l| l.chars().all(|c| c.is_ascii_digit())), "a cut never needs an A-page: {labels:?}");
+    assert_eq!(page_text(&locked[4].1), page_text(&plain[4]), "the page after the cut is unchanged");
+}
+
+#[test]
+fn the_pdf_marks_changes_and_can_print_only_the_changed_pages() {
+    let base = long_take(14);
+    let mut now = base.clone();
+    let last = now.blocks.iter().rposition(|b| b.element == Element::Action).unwrap();
+    now.blocks[last].text.push_str(" Changed.");
+    let changed = crate::revision::changed(&base, &now);
+    assert_eq!(changed.len(), 1);
+    let opts = export::PdfOptions {
+        title_page: false,
+        changed: changed.clone(),
+        revision: Some((crate::revision::header(0, "2026-11-04"), crate::revision::paper(0))),
+        changed_only: true,
+        ..Default::default()
+    };
+    let plan = export::pdf_plan(&now, &opts);
+    assert_eq!(plan.len(), 1, "only the page with the change");
+    assert!(plan[0].revised);
+    let page = export::page_of_block(&now, now.blocks[last].id).unwrap();
+    assert_eq!(plan[0].label, page.to_string());
+    assert_eq!(crate::revision::header(0, "2026-11-04"), "Blue Rev. 11/04/26");
+    assert_eq!(crate::revision::header(9, "2026-12-01"), "Double Pink Rev. 12/01/26");
+    let bytes = export::pdf_bytes(&now, &export::PdfOptions { tint: true, ..opts }).unwrap();
+    assert!(bytes.starts_with(b"%PDF"));
+}
+
+
+
+fn issue<'a>(list: &'a [fountain::Issue], word: &str) -> Option<&'a fountain::Issue> {
+    list.iter().find(|i| i.what.contains(word))
+}
+
+#[test]
+fn a_fountain_import_says_what_it_could_not_keep() {
+    let src = "Title: Odd Bits\nCopyright: 2026 Somebody\n\n# ONE\n\n## The setup\n\nINT. ROOM - DAY #12#\n\n~La la la\n\n>THE CENTRE<\n\n===\n\n/* gone */\n\n.EXT. YARD - NIGHT #13#\n\nShe waits.\n";
+    let (d, issues) = fountain::parse_checked(src);
+    let n = |w: &str| issue(&issues, w).map(|i| i.count).unwrap_or(0);
+    assert_eq!(n("Scene numbers"), 2);
+    assert_eq!(n("Section headings"), 1);
+    assert_eq!(n("Lyrics"), 1);
+    assert_eq!(n("Centred"), 1);
+    assert_eq!(n("Page breaks"), 1);
+    assert_eq!(n("Boneyard"), 1);
+    assert_eq!(n("Copyright"), 1);
+    let lyric = issue(&issues, "Lyrics").unwrap().at.unwrap();
+    assert_eq!(d.blocks[lyric].text, "La la la", "each issue points at the line it is about");
+
+    let (d, issues) = fountain::parse_checked("INT. ROOM - DAY\n\n/* never closed\n\nShe waits.\n");
+    assert!(issue(&issues, "unclosed").is_some());
+    assert!(d.blocks.iter().any(|b| b.text.contains("She waits.")), "an unclosed boneyard no longer eats the rest");
+}
+
+#[test]
+fn a_final_draft_import_says_what_it_could_not_keep() {
+    let fdx = r#"<?xml version="1.0"?><FinalDraft><Content>
+<Paragraph Type="Scene Heading"><Text>INT. ROOM - DAY</Text></Paragraph>
+<Paragraph Type="General"><Text>A general line &#8212; with a dash &amp; more</Text></Paragraph>
+<Paragraph Type="Cast List"><Text>MARIA, JONAS</Text></Paragraph>
+<Paragraph Type="Action"><Text>Plain action.</Text></Paragraph>
+</Content><ScriptNotes><ScriptNote Range="1,5"><Paragraph><Text>check</Text></Paragraph></ScriptNote></ScriptNotes></FinalDraft>"#;
+    let (d, issues) = fountain::parse_fdx_checked(fdx);
+    assert_eq!(issue(&issues, "General").map(|i| i.count), Some(1));
+    assert_eq!(issue(&issues, "Cast List").map(|i| i.count), Some(1));
+    assert_eq!(issue(&issues, "script notes").map(|i| i.count), Some(1));
+    assert!(issue(&issues, "Action").is_none(), "plain action is not a problem");
+    assert_eq!(d.blocks[1].text, "A general line \u{2014} with a dash & more", "character codes decode");
+    assert!(!fountain::parse_fdx_checked("<FinalDraft></FinalDraft>").1.is_empty());
+}
+
+#[test]
+fn blacklines_own_exports_import_with_nothing_to_report() {
+    let mut d = take();
+    d.blocks[3].remark = "softer".into();
+    let (_, issues) = fountain::parse_checked(&export::to_fountain(&d));
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, issues) = fountain::parse_fdx_checked(&export::to_fdx(&d));
+    assert!(issues.is_empty(), "{issues:?}");
+}
+
+#[test]
+fn the_tour_goes_to_new_people_and_whats_new_to_people_updating() {
+    use crate::app::onboarding::{wanted, Kind};
+    assert_eq!(wanted("", true), Some(Kind::Full));
+    assert_eq!(wanted("", false), Some(Kind::New), "an existing settings file without the key is an update");
+    assert_eq!(wanted("blue-pages", false), None);
+    assert_eq!(wanted("blue-pages", true), None);
+    let s = crate::settings::Settings::parse("light_mode = no\n");
+    assert!(!s.fresh);
+    assert!(crate::settings::Settings::default().fresh);
+    assert!(s.serialize().contains("onboarded = \n") || s.serialize().contains("onboarded ="));
 }
