@@ -79,6 +79,7 @@ pub struct Settings {
     pub show_library: bool,
     pub show_scenes: bool,
     pub show_cast: bool,
+    pub beat_guides: bool,
     pub page_px: f32,
     pub page_breaks: bool,
     pub scene_numbers: bool,
@@ -117,6 +118,7 @@ impl Default for Settings {
             show_library: true,
             show_scenes: true,
             show_cast: false,
+            beat_guides: true,
             page_px: 16.0,
             page_breaks: true,
             scene_numbers: false,
@@ -173,7 +175,8 @@ impl Settings {
              pdf_title_page = {}\n\
              pdf_scene_numbers = {}\n\
              pdf_character_colors = {}\n\
-             pdf_notes = {}\n",
+             pdf_notes = {}\n\
+             beat_guides = {}\n",
             b(self.light_mode),
             b(self.animations),
             self.font_scale,
@@ -202,6 +205,7 @@ impl Settings {
             b(self.pdf_scene_numbers),
             b(self.pdf_character_colors),
             b(self.pdf_notes),
+            b(self.beat_guides),
         ) + if self.custom_colors {
             "character_colors_mode = custom\n"
         } else {
@@ -235,6 +239,7 @@ impl Settings {
                 "show_library" => s.show_library = yes(v),
                 "show_scenes" => s.show_scenes = yes(v),
                 "show_cast" => s.show_cast = yes(v),
+                "beat_guides" => s.beat_guides = yes(v),
                 "page_px" => s.page_px = v.parse::<f32>().unwrap_or(16.0).clamp(11.0, 26.0),
                 "page_breaks" => s.page_breaks = yes(v),
                 "scene_numbers" => s.scene_numbers = yes(v),

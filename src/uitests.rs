@@ -1063,3 +1063,46 @@ fn ctrl_shift_r_opens_the_reports_and_a_scene_row_jumps_there() {
     assert!(!h.app.debug_popover_open(), "going to a scene closes the window");
     assert_eq!(h.app.focus_block(), Some(third));
 }
+
+fn storylines() -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.meta.title = "Storylines".into();
+    d.meta.set_storyline(1, "The heist");
+    for n in 0..24 {
+        d.push(Element::SceneHeading, &format!("INT. ROOM {n} - DAY"));
+        d.push(Element::Action, "Somebody waits by the window and counts the cars going past, slowly.");
+    }
+    d.reseed_ids();
+    let heads: Vec<usize> = (0..d.blocks.len()).filter(|i| d.blocks[*i].element == Element::SceneHeading).collect();
+    for (k, i) in heads.into_iter().enumerate() {
+        d.blocks[i].tint = Some(k % 3);
+    }
+    d
+}
+
+#[test]
+fn a_storyline_filters_the_cards_and_the_timeline_scrolls_to_a_card() {
+    let mut h = Harness::with(1320.0, 900.0, "");
+    h.load(storylines());
+    h.app.set_mode(Mode::Cards);
+    h.frames(3);
+    let chips = h.app.debug_cards().chips.clone();
+    assert_eq!(chips.iter().map(|c| c.0).collect::<Vec<_>>(), vec![0, 1, 2]);
+    h.click(chips[1].1.center());
+    h.frames(2);
+    assert_eq!(h.app.debug_cards().only, vec![1]);
+    h.click(chips[1].1.center());
+    h.frames(2);
+    assert!(h.app.debug_cards().only.is_empty());
+
+    let segments = h.app.debug_cards().segments.clone();
+    assert_eq!(segments.len(), 24);
+    assert!(segments.windows(2).all(|w| w[0].1.right() <= w[1].1.left() + 0.5), "in script order, left to right");
+    let last = h.app.debug_card_rect(23).unwrap();
+    assert!(last.top() > 900.0, "the last card starts out of sight");
+    h.click(segments[23].1.center());
+    h.frames(40);
+    let last = h.app.debug_card_rect(23).unwrap();
+    assert!(last.top() > 0.0 && last.bottom() < 900.0, "scrolled into view: {last:?}");
+}

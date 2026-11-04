@@ -1444,3 +1444,17 @@ fn the_reports_count_what_is_on_the_page() {
     assert!(text.contains("MARIA      2     2      6      75%"), "{text}");
     assert!(r.text(2, "Test").contains("KITCHEN"));
 }
+
+#[test]
+fn beat_guides_land_on_the_usual_pages() {
+    let beats = crate::cards::beat_pages(110 * 8);
+    let pages: Vec<usize> = beats.iter().map(|b| b.2).collect();
+    assert_eq!(pages, vec![12, 28, 56, 83, 100]);
+    assert_eq!(beats[2].0, "Midpoint");
+    assert_eq!(crate::cards::beat_pages(0).iter().map(|b| b.2).collect::<Vec<_>>(), vec![1; 5]);
+
+    let spans = vec![(0, 8), (8, 4), (12, 20)];
+    assert_eq!(crate::cards::beat_scene(&spans, 32, 0.10), Some(0));
+    assert_eq!(crate::cards::beat_scene(&spans, 32, 0.30), Some(1));
+    assert_eq!(crate::cards::beat_scene(&spans, 32, 0.90), Some(2));
+}

@@ -1253,6 +1253,11 @@ impl App {
             self.new_scene();
             self.mode = Mode::Cards;
         }
+        let tip = "Beat guides on the timeline: inciting incident, the act breaks, midpoint and climax";
+        if ui::ribbon_button(ui, Icon::Timeline, "Beats", tip, self.settings.beat_guides) {
+            self.settings.beat_guides = !self.settings.beat_guides;
+            self.save_settings();
+        }
         let left = (room - ui.min_rect().width()).max(0.0);
         let text = ui::pick_that_fits(
             ui,
@@ -2151,7 +2156,7 @@ impl App {
             .id_salt("ns-cards")
             .auto_shrink([false; 2])
             .show(ui, |ui| {
-                out = cards::show(ui, &mut self.doc, &mut self.cards, &lengths, &act_notes, live, self.frame_no);
+                out = cards::show(ui, &mut self.doc, &mut self.cards, &lengths, &act_notes, live, self.frame_no, self.settings.beat_guides);
             });
         if out.changed {
             self.mark_changed();
@@ -3888,6 +3893,9 @@ impl App {
     }
     pub fn debug_menu_item(&self, n: usize) -> Option<Rect> {
         self.menu_item_rects.get(n).copied()
+    }
+    pub fn debug_cards(&self) -> &cards::CardsState {
+        &self.cards
     }
     pub fn debug_card_rect(&self, n: usize) -> Option<Rect> {
         self.cards.last_rects.get(n).copied()
