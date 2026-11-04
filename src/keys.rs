@@ -109,7 +109,7 @@ impl Command {
             ExportWindow => "Export…".into(),
             NextView => "Next view (Write, Cards, Read)".into(),
             FocusMode => "Focus mode".into(),
-            ToggleLibrary => "Show or hide the library".into(),
+            ToggleLibrary => "Show or hide Notes and Changes".into(),
             ToggleDetails => "Show or hide Details".into(),
             ToggleScenes => "Show or hide Scenes".into(),
             Settings => "Settings".into(),

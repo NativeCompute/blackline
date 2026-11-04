@@ -1311,3 +1311,51 @@ fn the_pdf_can_list_every_note_with_its_page() {
     assert!(with.len() > without.len());
     assert!(export::endnotes(&argument()).is_empty(), "no notes, no notes page");
 }
+
+fn take() -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.push(Element::SceneHeading, "INT. KITCHEN - NIGHT");
+    d.push(Element::Action, "Rain on the glass.");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "I said stop.");
+    d.push(Element::Action, "Silence.");
+    d.reseed_ids();
+    d
+}
+
+#[test]
+fn a_revision_marks_only_what_moved() {
+    let base = take();
+    assert!(crate::revision::changed(&base, &base).is_empty());
+
+    let mut now = base.clone();
+    now.blocks[3].text = "I said  stop. ".into();
+    assert!(crate::revision::changed(&base, &now).is_empty(), "spacing alone is not a change");
+
+    now.blocks[3].text = "I said stop. Now.".into();
+    let edited = now.blocks[3].id;
+    assert_eq!(crate::revision::changed(&base, &now), [edited].into_iter().collect());
+
+    let mut now = base.clone();
+    let mut thunder = now.blocks[1].clone();
+    thunder.id = 99;
+    thunder.text = "Thunder.".into();
+    now.blocks.insert(2, thunder);
+    assert_eq!(crate::revision::changed(&base, &now), [99].into_iter().collect());
+
+    let mut now = base.clone();
+    let after = now.blocks[2].id;
+    now.blocks.remove(1);
+    assert_eq!(crate::revision::changed(&base, &now), [after].into_iter().collect(), "a cut marks the line after it");
+
+    let mut now = base.clone();
+    now.blocks.pop();
+    let last = now.blocks.last().unwrap().id;
+    assert_eq!(crate::revision::changed(&base, &now), [last].into_iter().collect(), "a cut at the end marks the line before");
+
+    let mut now = base.clone();
+    now.blocks[3].element = Element::Action;
+    let moved = now.blocks[3].id;
+    assert_eq!(crate::revision::changed(&base, &now), [moved].into_iter().collect(), "a new element type counts");
+}

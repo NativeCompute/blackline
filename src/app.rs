@@ -89,14 +89,12 @@ struct Layout2 {
     cast: Vec<CastMember>,
     speakers: Vec<String>,
     dialogue: f32,
+    block_pages: HashMap<u64, usize>,
+    changes: std::collections::HashSet<u64>,
 }
 
 #[derive(Default)]
 struct Rail {
-    last_rects: HashMap<PathBuf, Rect>,
-    ghost: Option<(String, Rect, Instant)>,
-    starred_collapsed: bool,
-    all_collapsed: bool,
     menu: Option<(PathBuf, Pos2, u64)>,
 }
 
@@ -143,8 +141,6 @@ pub struct App {
     pages: PagesState,
     mode: Mode,
 
-    search: String,
-    focus_search: bool,
     focus_title: bool,
     focus_mode: bool,
 
@@ -192,6 +188,11 @@ pub struct App {
     rail: Rail,
     find: Find,
     note_edit: Option<notes::NoteEdit>,
+    left_tab: usize,
+    left_rect: Rect,
+    left_rows: Vec<(u64, Rect)>,
+    library_button: Rect,
+    rev_base: Option<(String, Document)>,
 
     frame_no: u64,
     page_key: String,
@@ -268,8 +269,6 @@ impl App {
             cards: CardsState::default(),
             pages: PagesState::default(),
             mode: Mode::Write,
-            search: String::new(),
-            focus_search: false,
             focus_title: false,
             focus_mode: false,
             settings,
@@ -310,6 +309,11 @@ impl App {
             rail: Rail::default(),
             find: Find::default(),
             note_edit: None,
+            left_tab: 0,
+            left_rect: Rect::NOTHING,
+            left_rows: Vec::new(),
+            library_button: Rect::NOTHING,
+            rev_base: None,
             frame_no: 0,
             page_key: String::new(),
             page_born: Instant::now(),
@@ -534,9 +538,6 @@ impl App {
             .find(|e| e.path == path)
             .map(|e| e.title.clone())
             .unwrap_or_default();
-        if let Some(r) = self.rail.last_rects.get(path).copied() {
-            self.rail.ghost = Some((title.clone(), r, Instant::now()));
-        }
         match self.store.delete(path) {
             Ok(()) => {
                 if self.path.as_deref() == Some(path) {
@@ -606,7 +607,22 @@ impl App {
         let starts: HashMap<u64, usize> = export::page_starts(&self.doc).into_iter().map(|(n, id)| (id, n)).collect();
         let lengths = export::scene_lengths(&self.doc);
         let pages = export::page_count(&self.doc);
+        let mut block_pages: HashMap<u64, usize> = HashMap::new();
+        for (k, page) in export::paginate(&export::compose(&self.doc)).iter().enumerate() {
+            for l in page {
+                for id in [l.block, l.right.as_ref().and_then(|r| r.block)].into_iter().flatten() {
+                    block_pages.entry(id).or_insert(k + 1);
+                }
+            }
+        }
+        self.ensure_rev_base();
+        let changes = match &self.rev_base {
+            Some((_, base)) if self.doc.meta.revising() => crate::revision::changed(base, &self.doc),
+            _ => Default::default(),
+        };
         self.layout = Layout2 {
+            block_pages,
+            changes,
             acts: editor::act_notes(&self.doc, &starts, pages),
             page_starts: starts,
             pages,
@@ -972,6 +988,13 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
 
+            let tip = format!("Back to your scripts · {}", self.keys_for(keys::Command::FindScripts));
+            if ui::ribbon_button(ui, Icon::ChevronLeft, "Library", &tip, false) {
+                self.go_home();
+            }
+            self.library_button = ui.min_rect();
+            ui::rule(ui, 22.0);
+
             if let Some(picked) = ui::segmented(
                 ui,
                 &[
@@ -1062,7 +1085,7 @@ impl App {
                     self.settings.show_scenes = !self.settings.show_scenes;
                     self.save_settings();
                 }
-                let tip = format!("Library · {}", self.keys_for(keys::Command::ToggleLibrary));
+                let tip = format!("Notes and changes · {}", self.keys_for(keys::Command::ToggleLibrary));
                 if ui::ribbon_button(ui, Icon::Sidebar, "", &tip, self.settings.show_library) {
                     self.settings.show_library = !self.settings.show_library;
                     self.save_settings();
@@ -1257,367 +1280,7 @@ impl App {
     // library rail here---
 
     fn browser(&mut self, ctx: &egui::Context) {
-        if !self.settings.show_library || self.focus_mode {
-            return;
-        }
-        egui::SidePanel::left("ns-rail")
-            .exact_width(theme::RAIL_W + theme::GAP)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(egui::Frame::none().inner_margin(egui::Margin {
-                left: theme::GAP,
-                right: 0.0,
-                top: theme::GAP,
-                bottom: theme::GAP,
-            }))
-            .show(ctx, |ui| {
-                theme::island_frame(theme::R_ISLAND)
-                    .inner_margin(egui::Margin::symmetric(12.0, 14.0))
-                    .show(ui, |ui| {
-                        ui.set_min_size(ui.available_size());
-
-                        // make things here---
-                        ui.horizontal(|ui| {
-                            let w = ui.available_width() - 38.0;
-                            if self.can_write() {
-                                if new_script_button(ui, w, &self.keys_for(keys::Command::NewScript)) {
-                                    self.new_script();
-                                }
-                                if ui::icon_button(ui, Icon::Upload, "Import Fountain, Final Draft or markdown  ·  or drop a file on the window", 32.0) {
-                                    self.start_import();
-                                }
-                            } else {
-                                ui.allocate_exact_size(Vec2::new(w, 34.0), Sense::hover());
-                            }
-                        });
-                        ui.add_space(9.0);
-
-                        // filter here---
-                        let search = ui.add(
-                            egui::TextEdit::singleline(&mut self.search)
-                                .id(egui::Id::new("ns-search"))
-                                .desired_width(f32::INFINITY)
-                                .margin(egui::Margin::symmetric(10.0, 7.0))
-                                .hint_text("Filter scripts"),
-                        );
-                        if self.focus_search {
-                            search.request_focus();
-                            self.focus_search = false;
-                        }
-                        ui.add_space(9.0);
-
-                        let mut open: Option<PathBuf> = None;
-                        let mut ask: Option<PathBuf> = None;
-                        let mut star: Option<PathBuf> = None;
-                        let mut menu: Option<(PathBuf, Pos2)> = None;
-
-                        const TRACKER: f32 = 34.0;
-                        const FOOT: f32 = 24.0;
-                        let tracker = !self.settings.youtrack_url.trim().is_empty();
-                        let gaps = ui.spacing().item_spacing.y * if tracker { 2.0 } else { 1.0 };
-                        let list_h = (ui.available_height() - if tracker { TRACKER } else { 0.0 } - FOOT - gaps).max(60.0);
-                        let (list, _) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), list_h),
-                            Sense::hover(),
-                        );
-                        let mut list_ui = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(list)
-                                .layout(Layout::top_down(Align::Min)),
-                        );
-                        egui::ScrollArea::vertical()
-                            .id_salt("ns-rail-list")
-                            .auto_shrink([false; 2])
-                            .max_height(list_h)
-                            .show(&mut list_ui, |ui| {
-                                self.rail_body(ui, &mut open, &mut ask, &mut star, &mut menu);
-                            });
-
-                        if tracker && youtrack_button(ui, &self.settings.youtrack_url) {
-                            let url = self.settings.youtrack_url.trim().to_string();
-                            if url.starts_with("http://") || url.starts_with("https://") {
-                                self.store.open_url(&url);
-                            } else {
-                                self.deck.warn("That is not a web address", "Set the YouTrack link in Settings.");
-                            }
-                        }
-
-                        let (foot, _) =
-                            ui.allocate_exact_size(Vec2::new(ui.available_width(), FOOT), Sense::hover());
-                        self.foot_rect = foot;
-                        if ui::maker_line(ui, foot.translate(Vec2::new(0.0, 2.0)), false) {
-                            self.store.open_url(crate::NATIVECOMPUTE_URL);
-                        }
-
-                        if let Some(path) = open {
-                            self.open(path);
-                        }
-                        if let Some(path) = star {
-                            self.toggle_star(&path);
-                        }
-                        if let Some(path) = ask {
-                            self.ask_delete(path);
-                        }
-                        if let Some((path, at)) = menu {
-                            self.rail.menu = Some((path, at, self.frame_no));
-                        }
-                    });
-            });
-    }
-
-    fn rail_body(
-        &mut self,
-        ui: &mut egui::Ui,
-        open: &mut Option<PathBuf>,
-        ask: &mut Option<PathBuf>,
-        star: &mut Option<PathBuf>,
-        menu: &mut Option<(PathBuf, Pos2)>,
-    ) {
-        let p = pal();
-        let needle = self.search.trim().to_lowercase();
-        let mut list: Vec<Entry> = self
-            .entries
-            .iter()
-            .filter(|e| {
-                needle.is_empty()
-                    || e.title.to_lowercase().contains(&needle)
-                    || e.preview.to_lowercase().contains(&needle)
-            })
-            .cloned()
-            .collect();
-        match self.settings.sort_by {
-            SortBy::Recent => list.sort_by_key(|a| std::cmp::Reverse(a.modified)),
-            SortBy::Title => list.sort_by_key(|a| a.title.to_lowercase()),
-            SortBy::Length => list.sort_by_key(|a| std::cmp::Reverse(a.pages)),
-        }
-
-        let mut selected_row: Option<Rect> = None;
-        let mut seen_rects: HashMap<PathBuf, Rect> = HashMap::new();
-        let starred_first = self.settings.starred_first;
-        let (starred, rest): (Vec<Entry>, Vec<Entry>) = if starred_first {
-            list.into_iter().partition(|e| e.starred)
-        } else {
-            (Vec::new(), list)
-        };
-        let mut shown = 0usize;
-
-        for (label, icon, tint, items, is_starred) in [
-            ("Starred", Icon::StarFilled, Some(p.warn), &starred, true),
-            ("Scripts", Icon::File, None, &rest, false),
-        ] {
-            if items.is_empty() && (is_starred || shown > 0) {
-                continue;
-            }
-            let mut collapsed = if is_starred {
-                self.rail.starred_collapsed
-            } else {
-                self.rail.all_collapsed
-            };
-            let head = section_header(ui, label, icon, items.len(), &mut collapsed, tint);
-            if head.clicked {
-                if is_starred {
-                    self.rail.starred_collapsed = collapsed;
-                } else {
-                    self.rail.all_collapsed = collapsed;
-                }
-            }
-            if !collapsed {
-                let branch = ui.painter().add(egui::Shape::Noop);
-                let mut kid_rects = Vec::new();
-                for e in items {
-                    shown += 1;
-                    let r = self.script_row(ui, e, open, ask, star, menu);
-                    seen_rects.insert(e.path.clone(), r);
-                    if self.path.as_deref() == Some(e.path.as_path()) {
-                        selected_row = Some(r);
-                    }
-                    kid_rects.push(r);
-                }
-                draw_branch(ui, branch, head.rect, &kid_rects, tint.unwrap_or(p.text_faint));
-            }
-            ui.add_space(8.0);
-        }
-
-        self.rail.last_rects = seen_rects;
-
-        if let Some((title, rect, at)) = self.rail.ghost.clone() {
-            let t = (at.elapsed().as_secs_f32() / 0.5).clamp(0.0, 1.0);
-            if t >= 1.0 || !anim::enabled() {
-                self.rail.ghost = None;
-            } else {
-                let fade = 1.0 - anim::smootherstep(t);
-                let r = Rect::from_center_size(
-                    Pos2::new(rect.center().x, rect.center().y - 14.0 * (1.0 - fade)),
-                    Vec2::new(rect.width() * (0.7 + 0.3 * fade), rect.height() * fade.max(0.05)),
-                );
-                ui.painter().rect_filled(
-                    r,
-                    egui::Rounding::same(theme::R_MD),
-                    theme::wash(p.danger, (60.0 * fade) as u8),
-                );
-                ui.painter().text(
-                    Pos2::new(r.left() + 16.0, r.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    ui::elide(&title, 22),
-                    theme::font(theme::T_SM),
-                    theme::wash(p.danger_light, (200.0 * fade) as u8),
-                );
-                anim::keep_going(ui.ctx());
-            }
-        }
-
-        if let Some(r) = selected_row {
-            let y = anim::glide(ui.ctx(), "ns-rail-marker", r.center().y, 0.20);
-            let x = anim::glide(ui.ctx(), "ns-rail-marker-x", r.left() + 7.5, 0.30);
-            let bar = Rect::from_center_size(Pos2::new(x, y), Vec2::new(3.0, r.height() - 20.0));
-            ui.painter()
-                .rect_filled(bar, egui::Rounding::same(2.0), p.primary_light);
-            if (y - r.center().y).abs() > 0.4 {
-                anim::keep_going(ui.ctx());
-            }
-        }
-
-        if shown == 0 {
-            ui.add_space(14.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    egui::RichText::new(if needle.is_empty() {
-                        "No scripts yet."
-                    } else {
-                        "Nothing matches."
-                    })
-                    .font(theme::font(theme::T_SM))
-                    .color(p.text_faint),
-                );
-            });
-        }
-    }
-
-    fn script_row(
-        &self,
-        ui: &mut egui::Ui,
-        e: &Entry,
-        open: &mut Option<PathBuf>,
-        ask: &mut Option<PathBuf>,
-        star: &mut Option<PathBuf>,
-        menu: &mut Option<(PathBuf, Pos2)>,
-    ) -> Rect {
-        let p = pal();
-        let selected = self.path.as_deref() == Some(e.path.as_path());
-        let w = ui.available_width();
-        let (slot, resp) = ui.allocate_exact_size(Vec2::new(w, 40.0), Sense::click());
-        let rect = Rect::from_min_max(Pos2::new(slot.left() + INDENT, slot.top()), slot.max);
-        let _ = ui.interact(rect, row_id(&e.path), Sense::hover());
-        let hot = anim::ease(ui.ctx(), resp.id, resp.hovered() || selected, anim::HOVER);
-
-        let fill = if selected || hot > 0.5 { p.raised } else { p.solid_hi };
-        ui.painter()
-            .rect_filled(rect, egui::Rounding::same(theme::R_SM), theme::mix(p.solid_hi, fill, hot));
-        ui.painter().rect_stroke(
-            rect.shrink(0.5),
-            egui::Rounding::same(theme::R_SM),
-            Stroke::new(
-                1.0_f32,
-                if selected { p.primary_light } else { theme::mix(p.line, p.line_strong, hot) },
-            ),
-        );
-
-        let title = if selected { self.title_or_untitled() } else { e.title.clone() };
-        let right_pad = if hot > 0.02 { 60.0 } else if e.starred { 36.0 } else { 4.0 };
-        let title_font = if selected { theme::font_med(theme::T_SM) } else { theme::font(theme::T_SM) };
-        let row_clip = ui.painter().with_clip_rect(rect.shrink(1.0));
-        row_clip.text(
-            Pos2::new(rect.left() + 16.0, rect.top() + 14.0),
-            egui::Align2::LEFT_CENTER,
-            ui::elide_to_width(ui.ctx(), &title, title_font.clone(), 0.0, rect.width() - 24.0 - right_pad),
-            title_font,
-            p.text,
-        );
-        let pages = if selected { self.layout.pages } else { e.pages };
-        match self.team_row_line(e, pages) {
-            Some((line, live)) => {
-                let x = rect.left() + 16.0;
-                if live {
-                    ui.painter().circle_filled(Pos2::new(x + 3.0, rect.bottom() - 13.0), 2.6, p.ok);
-                }
-                let lx = x + if live { 11.0 } else { 0.0 };
-                row_clip.text(
-                    Pos2::new(lx, rect.bottom() - 13.0),
-                    egui::Align2::LEFT_CENTER,
-                    ui::elide_to_width(ui.ctx(), &line, theme::font(theme::T_MICRO), 0.0, rect.right() - lx - 8.0 - right_pad),
-                    theme::font(theme::T_MICRO),
-                    if live { p.text_dim } else { p.text_faint },
-                );
-            }
-            None => {
-                ui.painter().text(
-                    Pos2::new(rect.left() + 16.0, rect.bottom() - 13.0),
-                    egui::Align2::LEFT_CENTER,
-                    format!("{pages} pg · {}", relative_time(e.modified)),
-                    theme::font_mono(theme::T_MICRO),
-                    p.text_faint,
-                );
-            }
-        }
-
-        let star_rect = Rect::from_center_size(
-            Pos2::new(rect.right() - 44.0, rect.center().y),
-            Vec2::splat(24.0),
-        );
-        let del_rect = Rect::from_center_size(
-            Pos2::new(rect.right() - 20.0, rect.center().y),
-            Vec2::splat(24.0),
-        );
-        let star_resp = ui.interact(star_rect, resp.id.with("star"), Sense::click());
-        let del_resp = ui.interact(del_rect, resp.id.with("del"), Sense::click());
-
-        let star_hot = anim::ease(ui.ctx(), star_resp.id, star_resp.hovered(), anim::HOVER);
-        if e.starred || hot > 0.02 {
-            let lit = if e.starred { 1.0 } else { hot };
-            icons::draw(
-                ui.painter(),
-                star_rect.shrink(6.0),
-                if e.starred { Icon::StarFilled } else { Icon::Star },
-                if e.starred {
-                    theme::lighten(p.warn, 0.2 * star_hot)
-                } else {
-                    theme::mix(theme::wash(p.text_faint, (200.0 * lit) as u8), p.warn, star_hot)
-                },
-            );
-        }
-        let del_hot = anim::ease(ui.ctx(), del_resp.id, del_resp.hovered(), anim::HOVER);
-        let can_delete = self.can_write();
-        if hot > 0.02 && can_delete {
-            icons::draw(
-                ui.painter(),
-                del_rect.shrink(6.0),
-                Icon::Trash,
-                theme::mix(theme::wash(p.text_faint, (200.0 * hot) as u8), p.danger_light, del_hot),
-            );
-        }
-
-        if star_resp.clicked() {
-            *star = Some(e.path.clone());
-        } else if del_resp.clicked() && can_delete {
-            *ask = Some(e.path.clone());
-        } else if resp.clicked() && !selected {
-            *open = Some(e.path.clone());
-        }
-        if resp.secondary_clicked() {
-            if let Some(q) = ui.ctx().pointer_latest_pos() {
-                *menu = Some((e.path.clone(), q));
-            }
-        }
-        let _ = star_resp.on_hover_text(if e.starred { "Unstar" } else { "Star this script" });
-        if can_delete {
-            let _ = del_resp.on_hover_text("Delete this script");
-        }
-        if !e.preview.is_empty() {
-            let _ = resp.on_hover_text(format!("{}\n{} scenes · right click for more", e.preview, e.scenes));
-        }
-
-        ui.add_space(5.0);
-        rect
+        self.left_panel(ctx);
     }
 
     fn row_menu(&mut self, ctx: &egui::Context) {
@@ -3502,7 +3165,7 @@ impl App {
                 ("Details", "Title page and figures · Ctrl+I", 0),
                 ("Scenes", "The navigator · Ctrl+Shift+I", 1),
                 ("Cast", "Who speaks, and how much", 2),
-                ("Library", "Your scripts · Ctrl+B", 3),
+                ("Notes and changes", "Beside the page · Ctrl+B", 3),
             ] {
                 let slot = match key {
                     0 => &mut self.settings.show_details,
@@ -3810,8 +3473,10 @@ impl App {
                 }
             }
             C::FindScripts => {
-                self.settings.show_library = true;
-                self.focus_search = true;
+                if !self.home {
+                    self.go_home();
+                }
+                self.focus_home_search = true;
             }
             C::Find => {
                 if self.guard_edit() {
@@ -4249,8 +3914,23 @@ impl App {
     pub fn debug_focus_mode(&mut self, on: bool) {
         self.focus_mode = on;
     }
-    pub fn debug_row_rect(&self, path: &Path) -> Option<Rect> {
-        self.rail.last_rects.get(path).copied()
+    pub fn debug_library_button(&self) -> Rect {
+        self.library_button
+    }
+    pub fn debug_left_rows(&self) -> Vec<(u64, Rect)> {
+        self.left_rows.clone()
+    }
+    pub fn debug_left_tab(&mut self, tab: usize) {
+        self.left_tab = tab;
+    }
+    pub fn debug_start_revision(&mut self) {
+        self.start_revision();
+    }
+    pub fn debug_changes(&mut self) -> Vec<u64> {
+        self.refresh_layout(true);
+        let mut v: Vec<u64> = self.layout.changes.iter().copied().collect();
+        v.sort_unstable();
+        v
     }
     pub fn debug_foot_rect(&self) -> Rect {
         self.foot_rect
@@ -4379,96 +4059,6 @@ fn element_chip(ui: &mut egui::Ui, e: Element, on: bool, chord: &str) -> bool {
 }
 
 const TITLE_MIN_PX: f32 = 16.0;
-
-const INDENT: f32 = 20.0;
-
-fn row_id(path: &Path) -> egui::Id {
-    egui::Id::new(("ns-script-row", path.display().to_string()))
-}
-
-struct HeaderOut {
-    rect: Rect,
-    clicked: bool,
-}
-
-fn section_header(
-    ui: &mut egui::Ui,
-    label: &str,
-    icon: Icon,
-    count: usize,
-    collapsed: &mut bool,
-    tint: Option<Color32>,
-) -> HeaderOut {
-    let p = pal();
-    let w = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 28.0), Sense::click());
-    let hot = anim::ease(ui.ctx(), resp.id, resp.hovered(), anim::HOVER);
-    let col = tint.unwrap_or(p.text_dim);
-    if hot > 0.02 {
-        ui.painter().rect_filled(
-            rect,
-            egui::Rounding::ZERO,
-            theme::wash(if p.dark { p.raised } else { p.sunken }, (255.0 * hot) as u8),
-        );
-    }
-    let turn = anim::to(ui.ctx(), resp.id.with("turn"), if *collapsed { 0.0 } else { 1.0 }, 0.14);
-    icons::draw(
-        ui.painter(),
-        Rect::from_center_size(Pos2::new(rect.left() + 11.0, rect.center().y), Vec2::splat(11.0)),
-        if turn > 0.5 { Icon::ChevronDown } else { Icon::ChevronRight },
-        p.text_faint,
-    );
-    icons::draw(
-        ui.painter(),
-        Rect::from_center_size(Pos2::new(rect.left() + 28.0, rect.center().y), Vec2::splat(13.0)),
-        icon,
-        col,
-    );
-    theme::tracked_text(
-        ui.painter(),
-        Pos2::new(rect.left() + 42.0, rect.center().y),
-        &ui::elide_to_width(ui.ctx(), &label.to_uppercase(), theme::font_hud(theme::T_MICRO + 0.5), 0.8, rect.width() - 90.0),
-        theme::font_hud(theme::T_MICRO + 0.5),
-        theme::mix(p.text_dim, p.text, hot),
-        0.8,
-    );
-    ui.painter().text(
-        Pos2::new(rect.right() - 13.0, rect.center().y),
-        egui::Align2::RIGHT_CENTER,
-        format!("{count:02}"),
-        theme::font_hud(theme::T_MICRO),
-        p.text_faint,
-    );
-    let clicked = resp.clicked();
-    if clicked {
-        *collapsed = !*collapsed;
-    }
-    ui.add_space(3.0);
-    HeaderOut { rect, clicked }
-}
-
-fn draw_branch(ui: &egui::Ui, slot: egui::layers::ShapeIdx, head: Rect, kids: &[Rect], tint: Color32) {
-    if kids.is_empty() {
-        return;
-    }
-    let col = theme::wash(tint, 70);
-    let x = head.left() + 13.0;
-    let last = kids[kids.len() - 1];
-    let mut shapes: Vec<egui::Shape> = vec![egui::Shape::line_segment(
-        [
-            Pos2::new(x, head.bottom() + 1.0),
-            Pos2::new(x, last.center().y),
-        ],
-        Stroke::new(1.0_f32, col),
-    )];
-    for r in kids {
-        shapes.push(egui::Shape::line_segment(
-            [Pos2::new(x, r.center().y), Pos2::new(r.left() - 4.0, r.center().y)],
-            Stroke::new(1.0_f32, col),
-        ));
-    }
-    ui.painter().set(slot, egui::Shape::Vec(shapes));
-}
 
 fn slide_in(ui: &mut egui::Ui, island: Rect, arrive: f32, distance: f32) -> egui::Ui {
     let dy = (1.0 - arrive) * distance;
