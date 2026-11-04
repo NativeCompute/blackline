@@ -1038,3 +1038,28 @@ fn home_search_finds_a_line_inside_a_script_and_opens_it_there() {
     assert_eq!(h.app.path(), Some(three));
     assert_eq!(h.app.focus_block(), Some(cole));
 }
+
+#[test]
+fn ctrl_shift_r_opens_the_reports_and_a_scene_row_jumps_there() {
+    let mut h = Harness::with(1320.0, 900.0, "");
+    h.load(three_scenes());
+    h.press(Key::R, Modifiers::COMMAND | Modifiers::SHIFT);
+    h.frames(3);
+    assert!(h.app.debug_popover_open());
+    assert_eq!(h.app.debug_report().scenes.len(), 3);
+    assert_eq!(h.app.debug_report().speakers[0].name, "DETECTIVE COLE");
+    h.press(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert!(!h.app.debug_popover_open());
+
+    h.press(Key::R, Modifiers::COMMAND | Modifiers::SHIFT);
+    h.app.debug_report_tab(1);
+    h.frames(3);
+    let rows = h.app.debug_report_rows();
+    assert_eq!(rows.len(), 3);
+    let (third, rect) = rows[2];
+    h.click(rect.center());
+    h.frames(3);
+    assert!(!h.app.debug_popover_open(), "going to a scene closes the window");
+    assert_eq!(h.app.focus_block(), Some(third));
+}

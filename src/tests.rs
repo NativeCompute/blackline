@@ -1388,3 +1388,59 @@ fn searching_inside_a_script_reads_lines_and_notes() {
     assert!(storage::find_in(&text, "", 5).0.is_empty());
     assert!(storage::find_in(&text, "nowhere at all", 5).0.is_empty());
 }
+
+#[test]
+fn scene_headings_split_into_side_place_and_time() {
+    use crate::report::split_heading;
+    let s = |a: &str, b: &str, c: &str| (a.to_string(), b.to_string(), c.to_string());
+    assert_eq!(split_heading("INT. KITCHEN - NIGHT"), s("INT.", "KITCHEN", "NIGHT"));
+    assert_eq!(split_heading("ext.  rooftop - day"), s("EXT.", "ROOFTOP", "DAY"));
+    assert_eq!(split_heading("INT./EXT. CAR - MOVING - DAWN"), s("INT./EXT.", "CAR - MOVING", "DAWN"));
+    assert_eq!(split_heading("I/E. PORCH - LATER"), s("INT./EXT.", "PORCH", "LATER"));
+    assert_eq!(split_heading("MONTAGE"), s("", "MONTAGE", ""));
+}
+
+#[test]
+fn the_reports_count_what_is_on_the_page() {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.push(Element::SceneHeading, "INT. KITCHEN - NIGHT");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "One two three four.");
+    d.push(Element::Character, "JONAS (V.O.)");
+    d.push(Element::Parenthetical, "(quiet)");
+    d.push(Element::Dialogue, "Five six.");
+    d.push(Element::SceneHeading, "EXT. ROOF - NIGHT");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "Seven eight.");
+    d.push(Element::SceneHeading, "INT. KITCHEN - DAY");
+    d.push(Element::Action, "Empty.");
+    d.reseed_ids();
+    let r = crate::report::build(&d);
+
+    assert_eq!(r.speakers.len(), 2);
+    let maria = &r.speakers[0];
+    assert_eq!((maria.name.as_str(), maria.cues, maria.lines, maria.words, maria.scenes, maria.first_scene, maria.first_page), ("MARIA", 2, 2, 6, 2, 1, 1));
+    let jonas = &r.speakers[1];
+    assert_eq!((jonas.name.as_str(), jonas.cues, jonas.words), ("JONAS", 1, 2));
+    assert!((maria.share - 0.75).abs() < 1e-4 && (jonas.share - 0.25).abs() < 1e-4);
+
+    let lengths = export::scene_lengths(&d);
+    assert_eq!(r.scenes.len(), 3);
+    for (row, (id, page, eighths)) in r.scenes.iter().zip(&lengths) {
+        assert_eq!((row.id, row.page, row.eighths), (*id, *page, *eighths), "the same figures as the printed layout");
+    }
+    assert_eq!(r.scenes[0].cast, vec!["MARIA".to_string(), "JONAS".to_string()]);
+
+    let kitchen = r.places.iter().find(|p| p.name == "KITCHEN").unwrap();
+    assert_eq!((kitchen.scenes, kitchen.sides.clone()), (2, vec!["INT.".to_string()]));
+    assert_eq!(kitchen.eighths, r.scenes[0].eighths + r.scenes[2].eighths);
+    let night = r.times.iter().find(|t| t.name == "NIGHT").unwrap();
+    assert_eq!(night.scenes, 2);
+    assert_eq!(r.times.iter().map(|t| t.eighths).sum::<usize>(), r.eighths);
+
+    let text = r.text(0, "Test");
+    assert!(text.starts_with("Test · Characters\n\nCHARACTER"), "{text}");
+    assert!(text.contains("MARIA      2     2      6      75%"), "{text}");
+    assert!(r.text(2, "Test").contains("KITCHEN"));
+}

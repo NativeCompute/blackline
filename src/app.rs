@@ -27,6 +27,7 @@ mod home;
 mod team;
 mod keyboard;
 mod notes;
+mod reports;
 mod voices;
 
 const SNAPSHOT_IDLE: Duration = Duration::from_millis(700);
@@ -76,6 +77,7 @@ enum Popover {
     Account,
     History,
     Trash,
+    Reports,
 }
 
 #[derive(Default)]
@@ -194,6 +196,9 @@ pub struct App {
     left_tab: usize,
     left_rect: Rect,
     left_rows: Vec<(u64, Rect)>,
+    report: crate::report::Report,
+    report_tab: usize,
+    report_rows: Vec<(u64, Rect)>,
     library_button: Rect,
     rev_base: Option<(String, Document)>,
 
@@ -318,6 +323,9 @@ impl App {
             left_tab: 0,
             left_rect: Rect::NOTHING,
             left_rows: Vec::new(),
+            report: crate::report::Report::default(),
+            report_tab: 0,
+            report_rows: Vec::new(),
             library_button: Rect::NOTHING,
             rev_base: None,
             frame_no: 0,
@@ -1082,6 +1090,10 @@ impl App {
                 ui::rule(ui, 20.0);
                 ui.add_space(4.0);
 
+                let tip = format!("Reports — characters, scenes, locations · {}", self.keys_for(keys::Command::Reports));
+                if ui::ribbon_button(ui, Icon::Graph, "", &tip, self.popover == Some(Popover::Reports)) {
+                    self.open_reports();
+                }
                 let tip = format!("Focus — just the scene you are in · {}", self.keys_for(keys::Command::FocusMode));
                 if ui::ribbon_button(ui, Icon::Eye, "", &tip, self.focus_mode) {
                     self.focus_mode = !self.focus_mode;
@@ -2360,7 +2372,7 @@ impl App {
     // popovers here---
 
     fn popovers(&mut self, ctx: &egui::Context) {
-        let window = self.popover.filter(|p| matches!(p, Popover::Settings | Popover::Export));
+        let window = self.popover.filter(|p| matches!(p, Popover::Settings | Popover::Export | Popover::Reports));
         if window.is_some() && window != self.window_seen {
             ctx.memory_mut(|m| {
                 if let Some(id) = m.focused() {
@@ -2377,6 +2389,10 @@ impl App {
             ctx.animate_bool_with_time(egui::Id::new("ns-export-veil"), false, 0.0);
             ctx.animate_bool_with_time(egui::Id::new("ns-export-rise"), false, 0.0);
         }
+        if self.popover != Some(Popover::Reports) {
+            ctx.animate_bool_with_time(egui::Id::new("ns-reports-veil"), false, 0.0);
+            ctx.animate_bool_with_time(egui::Id::new("ns-reports-rise"), false, 0.0);
+        }
         self.voice_picker(ctx);
         match self.popover {
             Some(Popover::Menu) => self.more_menu(ctx),
@@ -2387,6 +2403,7 @@ impl App {
             Some(Popover::Account) => self.account_menu(ctx),
             Some(Popover::History) => self.history_panel(ctx),
             Some(Popover::Trash) => self.trash_panel(ctx),
+            Some(Popover::Reports) => self.reports_window(ctx),
             None => {}
         }
         self.row_menu(ctx);
@@ -3569,7 +3586,7 @@ impl App {
                     self.open_note(id);
                 }
             }
-            C::Reports => {}
+            C::Reports => self.open_reports(),
             C::Element(n) => {
                 if !self.guard_edit() {
                     return;

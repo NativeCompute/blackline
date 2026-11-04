@@ -17,6 +17,7 @@ pub mod logo;
 pub mod model;
 pub mod pages;
 pub mod people;
+pub mod report;
 pub mod revision;
 pub mod settings;
 pub mod splash;
