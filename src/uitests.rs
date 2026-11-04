@@ -1106,3 +1106,26 @@ fn a_storyline_filters_the_cards_and_the_timeline_scrolls_to_a_card() {
     let last = h.app.debug_card_rect(23).unwrap();
     assert!(last.top() > 0.0 && last.bottom() < 900.0, "scrolled into view: {last:?}");
 }
+
+#[test]
+fn an_import_with_problems_opens_a_report_that_points_at_them() {
+    let mut h = Harness::with(1320.0, 900.0, "");
+    let dir = std::env::temp_dir().join(format!("ns-import-report-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("odd.fountain");
+    std::fs::write(&f, "INT. ROOM - DAY\n\nShe waits.\n\n~A song she knows\n\n===\n\nShe leaves.\n").unwrap();
+    h.app.debug_import(&f);
+    h.frames(3);
+    assert!(h.app.debug_popover_open());
+    let issues = h.app.debug_imported().unwrap();
+    assert_eq!(issues.len(), 2, "{issues:?}");
+    h.press(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert!(!h.app.debug_popover_open());
+
+    let clean = dir.join("clean.fountain");
+    std::fs::write(&clean, "INT. ROOM - DAY\n\nShe waits.\n").unwrap();
+    h.app.debug_import(&clean);
+    h.frames(3);
+    assert!(!h.app.debug_popover_open(), "nothing to report, no window");
+}

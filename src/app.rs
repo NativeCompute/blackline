@@ -28,6 +28,7 @@ mod team;
 mod keyboard;
 mod notes;
 mod reports;
+mod imported;
 mod voices;
 
 const SNAPSHOT_IDLE: Duration = Duration::from_millis(700);
@@ -78,6 +79,7 @@ enum Popover {
     History,
     Trash,
     Reports,
+    Imported,
 }
 
 #[derive(Default)]
@@ -200,6 +202,7 @@ pub struct App {
     left_rows: Vec<(u64, Rect)>,
     report: crate::report::Report,
     report_tab: usize,
+    imported: Option<imported::Imported>,
     report_rows: Vec<(u64, Rect)>,
     library_button: Rect,
     rev_base: Option<(String, Document)>,
@@ -328,6 +331,7 @@ impl App {
             left_rows: Vec::new(),
             report: crate::report::Report::default(),
             report_tab: 0,
+            imported: None,
             report_rows: Vec::new(),
             library_button: Rect::NOTHING,
             rev_base: None,
@@ -769,19 +773,19 @@ impl App {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn import_path(&mut self, path: &Path) {
-        match storage::import_file(path) {
-            Ok(doc) => self.import_doc(doc),
+        match storage::import_file_checked(path) {
+            Ok((doc, issues)) => self.import_doc(doc, issues),
             Err(e) => self.deck.say("Could not import", &e, Tone::Danger),
         }
     }
 
     fn import_bytes(&mut self, name: &str, bytes: &[u8]) {
         let text = String::from_utf8_lossy(bytes);
-        let doc = storage::import_text(name, &text);
-        self.import_doc(doc);
+        let (doc, issues) = storage::import_text_checked(name, &text);
+        self.import_doc(doc, issues);
     }
 
-    fn import_doc(&mut self, doc: Document) {
+    fn import_doc(&mut self, doc: Document, issues: Vec<crate::fountain::Issue>) {
         if self.dirty {
             self.save(false);
         }
@@ -791,10 +795,14 @@ impl App {
                 let title = doc.meta.title.clone();
                 self.open(new_path);
                 self.mode = Mode::Write;
-                self.deck.ok(
-                    "Imported",
-                    &format!("{title} — {} scenes", doc.scene_count()),
-                );
+                if issues.is_empty() {
+                    self.deck.ok(
+                        "Imported",
+                        &format!("{title} — {} scenes", doc.scene_count()),
+                    );
+                } else {
+                    self.show_import_report(title, issues);
+                }
             }
             Err(e) => self.deck.say("Could not import", &e, Tone::Danger),
         }
@@ -2426,7 +2434,7 @@ impl App {
     // popovers here---
 
     fn popovers(&mut self, ctx: &egui::Context) {
-        let window = self.popover.filter(|p| matches!(p, Popover::Settings | Popover::Export | Popover::Reports));
+        let window = self.popover.filter(|p| matches!(p, Popover::Settings | Popover::Export | Popover::Reports | Popover::Imported));
         if window.is_some() && window != self.window_seen {
             ctx.memory_mut(|m| {
                 if let Some(id) = m.focused() {
@@ -2443,6 +2451,10 @@ impl App {
             ctx.animate_bool_with_time(egui::Id::new("ns-export-veil"), false, 0.0);
             ctx.animate_bool_with_time(egui::Id::new("ns-export-rise"), false, 0.0);
         }
+        if self.popover != Some(Popover::Imported) {
+            ctx.animate_bool_with_time(egui::Id::new("ns-imported-veil"), false, 0.0);
+            ctx.animate_bool_with_time(egui::Id::new("ns-imported-rise"), false, 0.0);
+        }
         if self.popover != Some(Popover::Reports) {
             ctx.animate_bool_with_time(egui::Id::new("ns-reports-veil"), false, 0.0);
             ctx.animate_bool_with_time(egui::Id::new("ns-reports-rise"), false, 0.0);
@@ -2458,6 +2470,7 @@ impl App {
             Some(Popover::History) => self.history_panel(ctx),
             Some(Popover::Trash) => self.trash_panel(ctx),
             Some(Popover::Reports) => self.reports_window(ctx),
+            Some(Popover::Imported) => self.imported_window(ctx),
             None => {}
         }
         self.row_menu(ctx);
