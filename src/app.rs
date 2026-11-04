@@ -26,6 +26,7 @@ use crate::ui;
 mod home;
 mod team;
 mod keyboard;
+mod notes;
 mod voices;
 
 const SNAPSHOT_IDLE: Duration = Duration::from_millis(700);
@@ -190,6 +191,7 @@ pub struct App {
 
     rail: Rail,
     find: Find,
+    note_edit: Option<notes::NoteEdit>,
 
     frame_no: u64,
     page_key: String,
@@ -307,6 +309,7 @@ impl App {
             aside_islands: Vec::new(),
             rail: Rail::default(),
             find: Find::default(),
+            note_edit: None,
             frame_no: 0,
             page_key: String::new(),
             page_born: Instant::now(),
@@ -631,6 +634,7 @@ impl App {
         export::PdfOptions {
             title_page: self.settings.pdf_title_page,
             scene_numbers: self.settings.pdf_scene_numbers,
+            notes: self.settings.pdf_notes,
             pages,
             voices: if self.settings.pdf_character_colors {
                 Some(theme::voice_inks(&self.layout.speakers, self.settings.colour_seed, self.chosen_voices()))
@@ -2289,6 +2293,7 @@ impl App {
                     element_colors: self.settings.element_colors,
                     char_colors: voices.as_ref(),
                     pages: self.layout.pages,
+                    margin: pad,
                 };
                 ui.horizontal(|ui| {
                     ui.add_space(pad);
@@ -2303,6 +2308,9 @@ impl App {
         self.layout.page_starts = starts;
         if changed {
             self.mark_changed();
+        }
+        if let Some(id) = self.ed.note_request.take() {
+            self.open_note(id);
         }
     }
 
@@ -3100,6 +3108,10 @@ impl App {
                 if ui::toggle_row(ui, "Scene numbers", "In both margins, the way a shooting script carries them.", &mut v) {
                     self.settings.pdf_scene_numbers = v;
                 }
+                let mut v = self.settings.pdf_notes;
+                if ui::toggle_row(ui, "Notes", "Every note you left, listed after the script with the page it belongs to.", &mut v) {
+                    self.settings.pdf_notes = v;
+                }
                 let mut v = self.settings.pdf_character_colors;
                 if ui::toggle_row(
                     ui,
@@ -3744,6 +3756,9 @@ impl App {
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         use egui::Key;
+        if self.note_edit.is_some() {
+            return;
+        }
         let commands = self.commands();
         for (cmd, chord) in self.settings.keys.listen(&commands, crate::WEB) {
             if ctx.input_mut(|i| i.consume_shortcut(&chord)) {
@@ -3868,7 +3883,13 @@ impl App {
                     Err(why) => self.deck.say("Dual dialogue", why, Tone::Info),
                 }
             }
-            C::AddNote | C::Reports => {}
+            C::AddNote => {
+                self.mode = Mode::Write;
+                if let Some(id) = self.ed.focus_block {
+                    self.open_note(id);
+                }
+            }
+            C::Reports => {}
             C::Element(n) => {
                 if !self.guard_edit() {
                     return;
@@ -4061,6 +4082,7 @@ impl App {
             self.aside(ctx);
             self.page(ctx);
             self.find_bar(ctx);
+            self.note_window(ctx);
         }
         self.popovers(ctx);
         chrome::resize_handles(ctx);
@@ -4247,6 +4269,9 @@ impl App {
     }
     pub fn is_home(&self) -> bool {
         self.home
+    }
+    pub fn debug_note_open(&self) -> Option<u64> {
+        self.note_edit.as_ref().map(|n| n.block)
     }
     pub fn access(&self) -> &Access {
         &self.access

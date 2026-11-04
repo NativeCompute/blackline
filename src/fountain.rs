@@ -1,7 +1,90 @@
 use crate::model::{Document, Element, Meta};
 
+const NOTE_OPEN: char = '\u{E000}';
+const NOTE_CLOSE: char = '\u{E001}';
+
+fn mark_notes(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(a) = rest.find("[[") {
+        match rest[a + 2..].find("]]") {
+            Some(b) => {
+                out.push_str(&rest[..a]);
+                out.push(NOTE_OPEN);
+                out.push_str(&rest[a + 2..a + 2 + b]);
+                out.push(NOTE_CLOSE);
+                rest = &rest[a + 2 + b + 2..];
+            }
+            None => break,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn take_notes(text: &str) -> (String, Vec<String>) {
+    let mut clean = String::new();
+    let mut notes = Vec::new();
+    let mut rest = text;
+    while let Some(a) = rest.find(NOTE_OPEN) {
+        clean.push_str(&rest[..a]);
+        let after = &rest[a + NOTE_OPEN.len_utf8()..];
+        let b = after.find(NOTE_CLOSE).unwrap_or(after.len());
+        let note = after[..b].trim();
+        if !note.is_empty() {
+            notes.push(note.to_string());
+        }
+        rest = after.get(b + NOTE_CLOSE.len_utf8()..).unwrap_or("");
+    }
+    clean.push_str(rest);
+    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+    (clean, notes)
+}
+
+fn settle_notes(doc: &mut Document) {
+    let mut k = 0;
+    while k < doc.blocks.len() {
+        let (text, notes) = take_notes(&doc.blocks[k].text);
+        let (synopsis, more) = take_notes(&doc.blocks[k].note);
+        let notes: Vec<String> = notes.into_iter().chain(more).collect();
+        let had_markers = text != doc.blocks[k].text;
+        doc.blocks[k].note = synopsis;
+        if notes.is_empty() {
+            if had_markers {
+                doc.blocks[k].text = text;
+            }
+            k += 1;
+            continue;
+        }
+        let joined = notes.join(" / ");
+        if text.is_empty() && k > 0 {
+            let prev = &mut doc.blocks[k - 1];
+            prev.remark = if prev.remark.is_empty() { joined } else { format!("{} / {joined}", prev.remark) };
+            doc.blocks.remove(k);
+            continue;
+        }
+        doc.blocks[k].text = text;
+        doc.blocks[k].remark = joined;
+        k += 1;
+    }
+    for field in [&mut doc.meta.title, &mut doc.meta.author, &mut doc.meta.draft, &mut doc.meta.contact] {
+        *field = take_notes(field).0;
+    }
+}
+
+fn attach_notes(doc: &mut Document, pending: &mut Vec<String>) {
+    if pending.is_empty() {
+        return;
+    }
+    let joined = std::mem::take(pending).join(" / ");
+    if let Some(last) = doc.blocks.last_mut() {
+        last.remark = if last.remark.is_empty() { joined } else { format!("{} / {joined}", last.remark) };
+    }
+}
+
 pub fn parse(text: &str) -> Document {
-    let text = strip_between(&strip_between(text, "/*", "*/"), "[[", "]]");
+    let marked: Vec<String> = text.lines().map(mark_notes).collect();
+    let text = strip_between(&strip_between(&marked.join("\n"), "/*", "*/"), "[[", "]]");
     let lines: Vec<&str> = text.lines().collect();
 
     let (meta, body_from) = title_page(&lines);
@@ -11,12 +94,19 @@ pub fn parse(text: &str) -> Document {
     let mut i = body_from;
     let mut prev_blank = true;
     let mut speaking = false;
+    let mut pending: Vec<String> = Vec::new();
 
     while i < lines.len() {
-        let raw = lines[i];
-        let line = raw.trim();
-        let next_blank = lines.get(i + 1).map(|l| l.trim().is_empty()).unwrap_or(true);
+        attach_notes(&mut doc, &mut pending);
+        let (bare, notes) = take_notes(lines[i].trim());
+        let line = bare.as_str();
+        let next_blank = lines.get(i + 1).map(|l| take_notes(l.trim()).0.is_empty()).unwrap_or(true);
         i += 1;
+        if line.is_empty() && !notes.is_empty() {
+            pending = notes;
+            continue;
+        }
+        pending = notes;
 
         if line.is_empty() {
             prev_blank = true;
@@ -125,6 +215,8 @@ pub fn parse(text: &str) -> Document {
         prev_blank = false;
     }
 
+    attach_notes(&mut doc, &mut pending);
+    settle_notes(&mut doc);
     doc.ensure_not_empty();
     doc.reseed_ids();
     doc

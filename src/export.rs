@@ -474,23 +474,28 @@ pub fn to_fountain(doc: &Document) -> String {
         if text.is_empty() {
             continue;
         }
+        let n = if b.remark.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" [[{}]]", b.remark.trim().replace("]]", "] ]"))
+        };
         match b.element {
             Element::SceneHeading => {
-                s.push_str(&format!("\n.{}\n\n", text.to_uppercase()));
+                s.push_str(&format!("\n.{}{n}\n\n", text.to_uppercase()));
                 if !b.note.trim().is_empty() {
                     s.push_str(&format!("= {}\n\n", b.note.trim()));
                 }
             }
-            Element::Shot => s.push_str(&format!("\n{}\n\n", text.to_uppercase())),
-            Element::Action => s.push_str(&format!("{}\n\n", text)),
-            Element::Character if b.dual => s.push_str(&format!("@{} ^\n", text.to_uppercase())),
-            Element::Character => s.push_str(&format!("@{}\n", text.to_uppercase())),
+            Element::Shot => s.push_str(&format!("\n{}{n}\n\n", text.to_uppercase())),
+            Element::Action => s.push_str(&format!("{}{n}\n\n", text)),
+            Element::Character if b.dual => s.push_str(&format!("@{} ^{n}\n", text.to_uppercase())),
+            Element::Character => s.push_str(&format!("@{}{n}\n", text.to_uppercase())),
             Element::Parenthetical => {
                 let inner = text.trim_matches(|c| c == '(' || c == ')').trim();
-                s.push_str(&format!("({})\n", inner));
+                s.push_str(&format!("({}){n}\n", inner));
             }
-            Element::Dialogue => s.push_str(&format!("{}\n\n", text)),
-            Element::Transition => s.push_str(&format!("> {}\n\n", text.to_uppercase())),
+            Element::Dialogue => s.push_str(&format!("{}{n}\n\n", text)),
+            Element::Transition => s.push_str(&format!("> {}{n}\n\n", text.to_uppercase())),
             Element::Act => {}
         }
     }
@@ -536,6 +541,7 @@ pub struct PdfOptions {
     pub scene_numbers: bool,
     pub pages: Option<Vec<usize>>,
     pub voices: Option<HashMap<String, Ink>>,
+    pub notes: bool,
 }
 
 impl Default for PdfOptions {
@@ -545,6 +551,7 @@ impl Default for PdfOptions {
             scene_numbers: false,
             pages: None,
             voices: None,
+            notes: false,
         }
     }
 }
@@ -662,6 +669,36 @@ pub fn parse_page_range(text: &str, max: usize) -> Result<Vec<usize>, String> {
     }
     out.sort_unstable();
     Ok(out)
+}
+
+pub fn endnotes(doc: &Document) -> Vec<(bool, String)> {
+    let pages = paginate(&compose(doc));
+    let page_of = |id: u64| {
+        pages
+            .iter()
+            .position(|pg| pg.iter().any(|l| l.block == Some(id) || l.right.as_ref().map(|r| r.block == Some(id)).unwrap_or(false)))
+            .map(|k| k + 1)
+    };
+    let mut rows: Vec<(bool, String)> = Vec::new();
+    for b in &doc.blocks {
+        let note = b.remark.trim();
+        if note.is_empty() {
+            continue;
+        }
+        if rows.is_empty() {
+            rows.push((true, "NOTES".into()));
+            rows.push((false, String::new()));
+        }
+        let line: String = b.text.trim().chars().take(44).collect();
+        let more = if b.text.trim().chars().count() > 44 { "…" } else { "" };
+        let at = page_of(b.id).map(|p| format!("PAGE {p}")).unwrap_or_else(|| "PAGE ?".into());
+        rows.push((true, format!("{at} — {line}{more}")));
+        for l in wrap(note, PAGE_COLS - 4) {
+            rows.push((false, format!("    {l}")));
+        }
+        rows.push((false, String::new()));
+    }
+    rows
 }
 
 pub fn page_of_block(doc: &Document, id: u64) -> Option<usize> {
@@ -824,6 +861,23 @@ pub fn pdf_bytes(doc: &Document, opts: &PdfOptions) -> Result<Vec<u8>, String> {
                     ],
                     is_closed: false,
                 });
+            }
+        }
+    }
+
+    // endnotes here---
+    if opts.notes {
+        let rows = endnotes(doc);
+        for (k, sheet) in rows.chunks(LINES_PER_PAGE).enumerate() {
+            let (page_idx, layer_idx) = next_sheet(format!("Notes {}", k + 1));
+            let layer = pdf.get_page(page_idx).get_layer(layer_idx);
+            layer.set_fill_color(colour(None));
+            for (row, (bold, text)) in sheet.iter().enumerate() {
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let y = PAGE_H_MM - TOP_MARGIN_MM - (row as f32 + 1.0) * LINE_H_MM;
+                layer.use_text(text, 12.0, Mm(LEFT_MARGIN_MM), Mm(y), if *bold { &courier_bold } else { &courier });
             }
         }
     }

@@ -98,6 +98,7 @@ pub struct Settings {
     pub pdf_title_page: bool,
     pub pdf_scene_numbers: bool,
     pub pdf_character_colors: bool,
+    pub pdf_notes: bool,
     pub keys: crate::keys::Keymap,
 }
 
@@ -134,6 +135,7 @@ impl Default for Settings {
             pdf_title_page: true,
             pdf_scene_numbers: false,
             pdf_character_colors: false,
+            pdf_notes: false,
             keys: crate::keys::Keymap::default(),
         }
     }
@@ -170,7 +172,8 @@ impl Settings {
              check_updates = {}\n\
              pdf_title_page = {}\n\
              pdf_scene_numbers = {}\n\
-             pdf_character_colors = {}\n",
+             pdf_character_colors = {}\n\
+             pdf_notes = {}\n",
             b(self.light_mode),
             b(self.animations),
             self.font_scale,
@@ -198,6 +201,7 @@ impl Settings {
             b(self.pdf_title_page),
             b(self.pdf_scene_numbers),
             b(self.pdf_character_colors),
+            b(self.pdf_notes),
         ) + if self.custom_colors {
             "character_colors_mode = custom\n"
         } else {
@@ -253,6 +257,7 @@ impl Settings {
                     pdf_numbers_said = true;
                 }
                 "pdf_character_colors" => s.pdf_character_colors = yes(v),
+                "pdf_notes" => s.pdf_notes = yes(v),
                 "check_updates" => s.check_updates = yes(v),
                 "youtrack_url" => {
                     s.youtrack_url = v.to_string()
