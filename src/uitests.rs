@@ -1129,3 +1129,24 @@ fn an_import_with_problems_opens_a_report_that_points_at_them() {
     h.frames(3);
     assert!(!h.app.debug_popover_open(), "nothing to report, no window");
 }
+
+#[test]
+fn home_says_when_an_update_is_out_until_it_is_dismissed() {
+    use crate::update::{Release, Status};
+    let mut h = Harness::with(1320.0, 900.0, "");
+    h.app.debug_go_home();
+    h.frames(2);
+    assert_eq!(h.app.debug_update_rect(), Rect::NOTHING, "nothing to say yet");
+    let newer = |v: &str| Status::Newer(Release { version: v.into(), url: String::new() });
+    h.app.debug_set_update(newer("9.9.0"));
+    h.frames(3);
+    let notice = h.app.debug_update_rect();
+    assert!(notice.width() > 300.0, "{notice:?}");
+    h.click(pos2(notice.right() - 25.0, notice.center().y));
+    h.frames(3);
+    assert_eq!(h.app.debug_update_rect(), Rect::NOTHING, "dismissed");
+    assert_eq!(storage::read_settings().dismissed_update, "9.9.0", "remembered");
+    h.app.debug_set_update(newer("9.9.1"));
+    h.frames(3);
+    assert!(h.app.debug_update_rect().width() > 300.0, "a later version speaks up again");
+}
