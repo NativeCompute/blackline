@@ -227,7 +227,7 @@ impl App {
         let (doc, path) = match entries.first() {
             Some(_) if home => (starter_document(), None),
             Some(e) => match store.load(&e.path) {
-                Load::Ready(d, _) => (d, Some(e.path.clone())),
+                Load::Ready(d, _) => (*d, Some(e.path.clone())),
                 Load::Pending | Load::Failed(_) => (starter_document(), None),
             },
             None => (starter_document(), None),
@@ -447,7 +447,7 @@ impl App {
             }
         }
         match self.store.load(&path) {
-            Load::Ready(doc, access) => self.install(path, doc, access),
+            Load::Ready(doc, access) => self.install(path, *doc, access),
             Load::Pending => self.opening = Some(path),
             Load::Failed(e) => self.deck.say("Could not open", &e, Tone::Danger),
         }
@@ -739,7 +739,7 @@ impl App {
             return;
         }
         match self.store.load_snapshot(snap) {
-            Load::Ready(old, _) => self.apply_snapshot(old),
+            Load::Ready(old, _) => self.apply_snapshot(*old),
             Load::Pending => self.restoring = Some(snap.to_path_buf()),
             Load::Failed(e) => self.deck.say("Could not restore", &e, Tone::Danger),
         }

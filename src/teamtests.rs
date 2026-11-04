@@ -85,7 +85,7 @@ impl Store for Memory {
             .map(|(_, a)| a.clone())
             .unwrap_or(Access::Edit);
         match doc {
-            Some(d) => Load::Ready(d, access),
+            Some(d) => Load::Ready(Box::new(d), access),
             None => Load::Failed("no such script".into()),
         }
     }
