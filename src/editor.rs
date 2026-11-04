@@ -83,6 +83,12 @@ pub struct View<'a> {
     pub char_colors: Option<&'a HashMap<String, egui::Color32>>,
     pub pages: usize,
     pub margin: f32,
+    pub labels: &'a [String],
+    pub changed: &'a std::collections::HashSet<u64>,
+}
+
+fn label_of(view: &View, n: usize) -> String {
+    view.labels.get(n.wrapping_sub(1)).cloned().unwrap_or_else(|| n.to_string())
 }
 
 pub fn set_element(doc: &mut Document, st: &mut EditorState, element: Element) -> bool {
@@ -228,7 +234,7 @@ fn page_body(
         if let Some(pair) = pairs.iter().find(|p| p.left == i).copied() {
             if view.page_breaks {
                 if let Some(n) = (pair.left..pair.end).find_map(|k| view.page_starts.get(&doc.blocks[k].id)) {
-                    page_rule(outer, content_left + GUTTER, col.right() - 10.0, *n);
+                    page_rule(outer, content_left + GUTTER, col.right() - 10.0, &label_of(view, *n));
                 }
             }
             if i > 0 {
@@ -305,7 +311,7 @@ fn page_body(
         // printed page begins here---
         if view.page_breaks && geo.outer {
             if let Some(n) = view.page_starts.get(&bid) {
-                page_rule(ui, content_left + GUTTER, col.right() - 10.0, *n);
+                page_rule(ui, content_left + GUTTER, col.right() - 10.0, &label_of(view, *n));
             }
         }
 
@@ -628,6 +634,17 @@ fn page_body(
             }
         }
 
+        // revision asterisk here---
+        if view.changed.contains(&bid) {
+            ui.painter().text(
+                Pos2::new(col.right() - 30.0, mid_y),
+                egui::Align2::CENTER_CENTER,
+                "*",
+                theme::font_page_bold(row_h * 0.9),
+                theme::wash(p.text, if dimmed { 90 } else { 255 }),
+            );
+        }
+
         // note in the margin here---
         let remark = doc.blocks[i].remark.trim().to_string();
         let mut wants_note = false;
@@ -921,7 +938,7 @@ fn scene_star(ui: &egui::Ui, c: Pos2, bid: u64, live: bool, dimmed: bool) {
     );
 }
 
-fn page_rule(ui: &mut egui::Ui, x0: f32, x1: f32, page: usize) {
+fn page_rule(ui: &mut egui::Ui, x0: f32, x1: f32, page: &str) {
     let p = pal();
     ui.add_space(6.0);
     let (slot, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 18.0), Sense::hover());

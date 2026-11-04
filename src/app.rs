@@ -93,6 +93,7 @@ struct Layout2 {
     dialogue: f32,
     block_pages: HashMap<u64, usize>,
     changes: std::collections::HashSet<u64>,
+    labels: Vec<String>,
 }
 
 #[derive(Default)]
@@ -179,6 +180,7 @@ pub struct App {
     popover_frame: u64,
     settings_tab: usize,
     export_choice: PageChoice,
+    export_changed_only: bool,
     export_range: String,
     window_seen: Option<Popover>,
     menu_button_rect: Rect,
@@ -307,6 +309,7 @@ impl App {
             popover_frame: 0,
             settings_tab: 0,
             export_choice: PageChoice::All,
+            export_changed_only: false,
             export_range: String::new(),
             window_seen: None,
             menu_button_rect: Rect::NOTHING,
@@ -627,25 +630,33 @@ impl App {
         if !(self.layout_stale && (stale_enough || now)) {
             return;
         }
-        let starts: HashMap<u64, usize> = export::page_starts(&self.doc).into_iter().map(|(n, id)| (id, n)).collect();
+        self.ensure_rev_base();
+        let changes = match &self.rev_base {
+            Some((_, base)) if self.doc.meta.revising() => crate::revision::changed(base, &self.doc),
+            _ => Default::default(),
+        };
+        let laid = export::layout(&self.doc, self.rev_lock());
         let lengths = export::scene_lengths(&self.doc);
-        let pages = export::page_count(&self.doc);
+        let pages = laid.len();
         let mut block_pages: HashMap<u64, usize> = HashMap::new();
-        for (k, page) in export::paginate(&export::compose(&self.doc)).iter().enumerate() {
+        let mut starts: HashMap<u64, usize> = HashMap::new();
+        for (k, (_, page)) in laid.iter().enumerate() {
+            if k > 0 {
+                if let Some(id) = page.iter().find_map(|l| l.block) {
+                    starts.entry(id).or_insert(k + 1);
+                }
+            }
             for l in page {
                 for id in [l.block, l.right.as_ref().and_then(|r| r.block)].into_iter().flatten() {
                     block_pages.entry(id).or_insert(k + 1);
                 }
             }
         }
-        self.ensure_rev_base();
-        let changes = match &self.rev_base {
-            Some((_, base)) if self.doc.meta.revising() => crate::revision::changed(base, &self.doc),
-            _ => Default::default(),
-        };
+        let labels: Vec<String> = laid.into_iter().map(|(l, _)| l).collect();
         self.layout = Layout2 {
             block_pages,
             changes,
+            labels,
             acts: editor::act_notes(&self.doc, &starts, pages),
             page_starts: starts,
             pages,
@@ -669,11 +680,36 @@ impl App {
         self.layout_stale = false;
     }
 
+    pub(super) fn rev_lock(&self) -> Option<&Document> {
+        match &self.rev_base {
+            Some((_, base)) if self.doc.meta.revising() && self.doc.meta.locked => Some(base),
+            _ => None,
+        }
+    }
+
+    fn changed_page_count(&self) -> usize {
+        let mut pages: Vec<usize> = self.layout.changes.iter().filter_map(|id| self.layout.block_pages.get(id).copied()).collect();
+        pages.sort_unstable();
+        pages.dedup();
+        pages.len()
+    }
+
+    pub(super) fn page_label(&self, n: usize) -> String {
+        self.layout.labels.get(n.wrapping_sub(1)).cloned().unwrap_or_else(|| n.to_string())
+    }
+
     fn pdf_options(&self, pages: Option<Vec<usize>>) -> export::PdfOptions {
+        let revising = self.doc.meta.revising();
+        let colour = self.doc.meta.revision.unwrap_or(0);
         export::PdfOptions {
-            title_page: self.settings.pdf_title_page,
+            title_page: self.settings.pdf_title_page && !(revising && self.export_changed_only),
             scene_numbers: self.settings.pdf_scene_numbers,
             notes: self.settings.pdf_notes,
+            changed: if revising { self.layout.changes.clone() } else { Default::default() },
+            revision: revising.then(|| (crate::revision::header(colour, &self.doc.meta.revision_date), crate::revision::paper(colour))),
+            lock: self.rev_lock().map(|d| Box::new(d.clone())),
+            changed_only: revising && self.export_changed_only,
+            tint: revising && self.settings.pdf_tint,
             pages,
             voices: if self.settings.pdf_character_colors {
                 Some(theme::voice_inks(&self.layout.speakers, self.settings.colour_seed, self.chosen_voices()))
@@ -689,7 +725,7 @@ impl App {
         }
         self.ed
             .focus_block
-            .and_then(|id| export::page_of_block(&self.doc, id))
+            .and_then(|id| self.layout.block_pages.get(&id).copied().or_else(|| export::page_of_block(&self.doc, id)))
             .or(Some(1))
     }
 
@@ -1958,6 +1994,8 @@ impl App {
     fn write_page(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
         let starts = std::mem::take(&mut self.layout.page_starts);
+        let labels = std::mem::take(&mut self.layout.labels);
+        let changes = std::mem::take(&mut self.layout.changes);
         let voices = self.voices();
         egui::ScrollArea::vertical()
             .id_salt("ns-write")
@@ -1989,6 +2027,8 @@ impl App {
                     char_colors: voices.as_ref(),
                     pages: self.layout.pages,
                     margin: pad,
+                    labels: &labels,
+                    changed: &changes,
                 };
                 ui.horizontal(|ui| {
                     ui.add_space(pad);
@@ -2001,6 +2041,8 @@ impl App {
                 });
             });
         self.layout.page_starts = starts;
+        self.layout.labels = labels;
+        self.layout.changes = changes;
         if changed {
             self.mark_changed();
         }
@@ -2207,7 +2249,14 @@ impl App {
 
     fn read_page(&mut self, ui: &mut egui::Ui) {
         let voices = if self.settings.character_colors_reading { self.voices() } else { None };
-        let jump = pages::show(ui, &self.doc, &mut self.pages, self.settings.scene_numbers, voices.as_ref());
+        let revising = self.doc.meta.revising();
+        let locked = revising && self.doc.meta.locked;
+        let rev = pages::Revised {
+            lock: self.rev_base.as_ref().filter(|_| locked).map(|(_, d)| d),
+            changed: revising.then_some(&self.layout.changes),
+            header: revising.then(|| crate::revision::header(self.doc.meta.revision.unwrap_or(0), &self.doc.meta.revision_date)),
+        };
+        let jump = pages::show(ui, &self.doc, &mut self.pages, self.settings.scene_numbers, voices.as_ref(), &rev);
         if let Some(id) = jump {
             self.mode = Mode::Write;
             self.ed.jump_to(id);
@@ -2693,7 +2742,8 @@ impl App {
         let selection = self.export_selection();
         let here = self.page_here();
         let t = anim::ease(ctx, "ns-export-rise", true, 0.30);
-        let size = Vec2::new(452.0, 476.0);
+        let revising = self.doc.meta.revising();
+        let size = Vec2::new(452.0, 476.0 + if revising { 128.0 } else { 0.0 });
         let rect = Rect::from_center_size(screen.center(), size * (0.97 + 0.03 * t));
 
         egui::Area::new(egui::Id::new("ns-export"))
@@ -2743,7 +2793,7 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let this_label = match here {
-                        Some(n) => format!("This page · {n}"),
+                        Some(n) => format!("This page · {}", self.page_label(n)),
                         None => "This page · title".to_string(),
                     };
                     for (choice, label) in [
@@ -2772,6 +2822,17 @@ impl App {
                     }
                 }
                 let (what, bad) = match &selection {
+                    _ if revising && self.export_changed_only => {
+                        let mut pages: Vec<usize> = self.layout.changes.iter().filter_map(|id| self.layout.block_pages.get(id).copied()).collect();
+                        pages.sort_unstable();
+                        pages.dedup();
+                        let names: Vec<String> = pages.iter().map(|n| self.page_label(*n)).collect();
+                        if names.is_empty() {
+                            ("No page has changed yet".to_string(), true)
+                        } else {
+                            (format!("Only the changed pages: {}", names.join(", ")), false)
+                        }
+                    }
                     Ok(None) => (
                         format!("Every page, 1 to {total}{}", if self.settings.pdf_title_page { ", after the title page" } else { "" }),
                         false,
@@ -2796,6 +2857,27 @@ impl App {
                         .font(theme::font(theme::T_CAP))
                         .color(if bad { p.danger_light } else { p.text_faint }),
                 );
+
+                if revising {
+                    ui.add_space(4.0);
+                    ui::separator(ui);
+                    let colour = self.doc.meta.revision.unwrap_or(0);
+                    ui::section(ui, &crate::revision::header(colour, &self.doc.meta.revision_date));
+                    let mut v = self.export_changed_only;
+                    let changed_pages = self.layout.labels.len().min(self.changed_page_count());
+                    let hint = match changed_pages {
+                        0 => "Nothing has changed yet.".to_string(),
+                        1 => "Just the page with a change, to hand out in the new colour.".to_string(),
+                        n => format!("Just the {n} pages with a change, to hand out in the new colour."),
+                    };
+                    if ui::toggle_row(ui, "Changed pages only", &hint, &mut v) {
+                        self.export_changed_only = v;
+                    }
+                    let mut v = self.settings.pdf_tint;
+                    if ui::toggle_row(ui, "Coloured paper", "Tint the changed pages in the revision colour, for printing on white.", &mut v) {
+                        self.settings.pdf_tint = v;
+                    }
+                }
 
                 ui.add_space(4.0);
                 ui::separator(ui);

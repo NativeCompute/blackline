@@ -2,7 +2,7 @@ use eframe::egui::{self, Key, Modifiers, Pos2, Rect, Sense, Vec2};
 use web_time::Instant;
 
 use crate::anim;
-use crate::export::{compose, paginate, Line};
+use crate::export::{layout, page_has, Line};
 use crate::icons::Icon;
 use crate::model::{base_character, Document, Element, LINES_PER_PAGE, PAGE_COLS};
 use crate::theme::{self, pal};
@@ -45,15 +45,25 @@ impl PagesState {
     }
 }
 
+#[derive(Default)]
+pub struct Revised<'a> {
+    pub lock: Option<&'a Document>,
+    pub changed: Option<&'a std::collections::HashSet<u64>>,
+    pub header: Option<String>,
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     doc: &Document,
     st: &mut PagesState,
     scene_numbers: bool,
     voices: Option<&std::collections::HashMap<String, egui::Color32>>,
+    rev: &Revised,
 ) -> Option<u64> {
     let p = pal();
-    let pages = paginate(&compose(doc));
+    let (labels, pages): (Vec<String>, Vec<Vec<Line>>) = layout(doc, rev.lock).into_iter().unzip();
+    let none = std::collections::HashSet::new();
+    let changed = rev.changed.unwrap_or(&none);
     st.sheets = 1 + pages.len();
     if st.current >= st.sheets {
         st.current = st.sheets - 1;
@@ -211,19 +221,34 @@ pub fn show(
         title_page(ui.painter(), doc, sheet, inch, line_h, char_w, &font, &bold, a(ink));
     } else {
         let n = st.current;
-        if n > 1 {
-            ui.painter().text(
-                Pos2::new(text_left + PAGE_COLS as f32 * char_w, sheet.top() + 0.5 * inch + line_h * 0.5),
+        let page: &Vec<Line> = &pages[n - 1];
+        let head_y = sheet.top() + 0.5 * inch + line_h * 0.5;
+        let mut head_x = text_left + PAGE_COLS as f32 * char_w;
+        if labels[n - 1] != "1" {
+            let r = ui.painter().text(
+                Pos2::new(head_x, head_y),
                 egui::Align2::RIGHT_CENTER,
-                format!("{n}."),
+                format!("{}.", labels[n - 1]),
                 font.clone(),
                 a(ink),
             );
+            head_x = r.left();
         }
-        let page: &Vec<Line> = &pages[n - 1];
+        if let (Some(h), true) = (&rev.header, page_has(page, changed)) {
+            ui.painter().text(Pos2::new(head_x - 4.0 * char_w, head_y), egui::Align2::RIGHT_CENTER, h, font.clone(), a(ink));
+        }
         for (row, whole) in page.iter().enumerate().take(LINES_PER_PAGE + 5) {
             let y = body_top + row as f32 * line_h;
             let (left_voice, right_voice) = speaking[n - 1][row];
+            if [whole.block, whole.right.as_ref().and_then(|r| r.block)].into_iter().flatten().any(|id| changed.contains(&id)) {
+                ui.painter().text(
+                    Pos2::new(text_left + PAGE_COLS as f32 * char_w + 0.45 * inch, y),
+                    egui::Align2::LEFT_TOP,
+                    "*",
+                    bold.clone(),
+                    a(ink),
+                );
+            }
             let mut halves: Vec<(&Line, Option<egui::Color32>, usize)> = vec![(whole, left_voice, 0)];
             if let Some(r) = &whole.right {
                 halves.push((r, right_voice, 1));
@@ -303,7 +328,7 @@ pub fn show(
     let label = if st.current == 0 {
         format!("TITLE PAGE / {:02} PP", st.sheets - 1)
     } else {
-        format!("PAGE {:02} / {:02}", st.current, st.sheets - 1)
+        format!("PAGE {} / {:02}", labels[st.current - 1], st.sheets - 1)
     };
     let hud = theme::font_hud(theme::T_CAP);
     let text_w = theme::tracked_width(ui.ctx(), &label, hud.clone(), 0.9);
