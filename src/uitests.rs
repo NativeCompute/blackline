@@ -242,13 +242,31 @@ fn deleting_a_script_from_the_menu_asks_first() {
 }
 
 #[test]
-fn a_script_is_opened_from_its_row() {
+fn the_library_button_goes_home_and_a_card_opens_the_script() {
     let mut h = Harness::new();
     let starter = h.app.path().unwrap();
     h.load(three_scenes());
-    let row = h.app.debug_row_rect(&starter).expect("the starter's row");
-    h.click(row.left_center() + vec2(30.0, 0.0));
+    let other = h.app.path().unwrap();
+    let button = h.app.debug_library_button();
+    assert!(button.width() > 60.0, "a labelled button, not just an icon: {button:?}");
+    h.click(button.center());
+    h.frames(2);
+    assert!(h.app.is_home());
+    h.app.debug_open_from_home(starter.clone());
+    h.frames(2);
+    assert!(!h.app.is_home());
     assert_eq!(h.app.path(), Some(starter));
+    assert_ne!(h.app.path(), Some(other));
+}
+
+#[test]
+fn ctrl_shift_f_searches_every_script_from_home() {
+    let mut h = Harness::new();
+    h.load(three_scenes());
+    h.press(Key::F, Modifiers::COMMAND | Modifiers::SHIFT);
+    h.frames(3);
+    assert!(h.app.is_home());
+    assert!(h.ctx.memory(|m| m.has_focus(egui::Id::new("ns-home-search"))));
 }
 
 // writing here---
@@ -606,7 +624,7 @@ fn nothing_is_drawn_outside_the_block_being_typed_into() {
 }
 
 #[test]
-fn the_library_foot_ends_level_with_the_other_islands() {
+fn the_left_panel_foot_ends_level_with_the_other_islands() {
     let mut h = Harness::with(1320.0, 900.0, "show_details = yes\n");
     let foot = h.app.debug_foot_rect();
     let page = h.app.debug_page_rect();
@@ -957,4 +975,44 @@ fn ctrl_m_adds_a_note_that_lands_in_the_file() {
     h.press(Key::Escape, Modifiers::NONE);
     h.frames(2);
     assert_eq!(h.app.doc().blocks[2].remark, "say it softer", "Esc keeps the note as it was");
+}
+
+#[test]
+fn a_note_in_the_left_panel_jumps_to_its_line() {
+    let mut h = Harness::with(1320.0, 900.0, "show_library = yes\n");
+    let mut doc = crossfire();
+    doc.blocks[2].remark = "softer".into();
+    doc.blocks[5].remark = "hold the silence".into();
+    h.load(doc);
+    h.frames(3);
+    let noted: Vec<u64> = h.app.doc().blocks.iter().filter(|b| !b.remark.is_empty()).map(|b| b.id).collect();
+    let rows = h.app.debug_left_rows();
+    assert_eq!(rows.iter().map(|r| r.0).collect::<Vec<_>>(), noted, "every note, in script order");
+    let (id, rect) = *rows.last().unwrap();
+    h.click(rect.center());
+    h.frames(3);
+    assert_eq!(h.app.focus_block(), Some(id));
+}
+
+#[test]
+fn a_revision_lists_each_changed_line_and_ends_clean() {
+    let mut h = Harness::with(1320.0, 900.0, "show_library = yes\n");
+    h.load(crossfire());
+    h.app.debug_left_tab(1);
+    h.app.debug_start_revision();
+    h.frames(2);
+    assert!(h.app.doc().meta.revising());
+    assert_eq!(h.app.doc().meta.revision, Some(0));
+    assert!(h.app.debug_changes().is_empty(), "nothing changed yet");
+    let line = h.app.doc().blocks[2].id;
+    h.focus(line);
+    h.type_text(" Now.");
+    h.frames(2);
+    assert_eq!(h.app.debug_changes(), vec![line]);
+    h.frames(2);
+    assert_eq!(h.app.debug_left_rows().iter().map(|r| r.0).collect::<Vec<_>>(), vec![line]);
+    h.idle();
+    let saved = h.saved_text();
+    assert!(saved.contains("revision: blue"), "{saved}");
+    assert!(saved.contains("revision_base: "), "{saved}");
 }
