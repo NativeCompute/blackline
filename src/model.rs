@@ -281,6 +281,104 @@ impl Document {
             .filter(|b| b.element == SceneHeading && !b.text.trim().is_empty())
             .count()
     }
+
+    // dual dialogue here---
+
+    pub fn speech_end(&self, cue: usize) -> usize {
+        let mut j = cue + 1;
+        while j < self.blocks.len() && matches!(self.blocks[j].element, Parenthetical | Dialogue) {
+            j += 1;
+        }
+        j
+    }
+
+    pub fn dual_pairs(&self) -> Vec<DualPair> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < self.blocks.len() {
+            if self.blocks[i].element != Character {
+                i += 1;
+                continue;
+            }
+            let left_end = self.speech_end(i);
+            let pairs = left_end < self.blocks.len()
+                && self.blocks[left_end].element == Character
+                && self.blocks[left_end].dual;
+            if pairs {
+                let right_end = self.speech_end(left_end);
+                out.push(DualPair { left: i, right: left_end, end: right_end });
+                i = right_end;
+            } else {
+                i = left_end;
+            }
+        }
+        out
+    }
+
+    pub fn cue_of(&self, index: usize) -> Option<usize> {
+        let mut k = index;
+        loop {
+            match self.blocks.get(k)?.element {
+                Character => return Some(k),
+                Parenthetical | Dialogue if k > 0 => k -= 1,
+                _ => return None,
+            }
+        }
+    }
+
+    pub fn toggle_dual(&mut self, id: u64) -> Result<bool, &'static str> {
+        const NEED: &str = "Dual dialogue needs two speeches in a row.";
+        let index = self.index_of(id).ok_or(NEED)?;
+        let cue = self.cue_of(index).ok_or(NEED)?;
+        let pairs = self.dual_pairs();
+        if let Some(p) = pairs.iter().find(|p| p.left == cue || p.right == cue) {
+            let right = p.right;
+            self.blocks[right].dual = false;
+            return Ok(false);
+        }
+        if cue > 0 {
+            if let Some(prev) = self.cue_of(cue - 1) {
+                if self.speech_end(prev) == cue && !pairs.iter().any(|p| p.right == prev) {
+                    self.blocks[cue].dual = true;
+                    return Ok(true);
+                }
+            }
+        }
+        let next = self.speech_end(cue);
+        if next < self.blocks.len() && self.blocks[next].element == Character {
+            self.blocks[next].dual = true;
+            return Ok(true);
+        }
+        Err(NEED)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DualPair {
+    pub left: usize,
+    pub right: usize,
+    pub end: usize,
+}
+
+pub const DUAL_COLS: usize = 28;
+pub const DUAL_RIGHT: usize = 31;
+
+impl Element {
+    pub fn dual_indent(self) -> usize {
+        match self {
+            Character => 7,
+            Parenthetical => 3,
+            _ => 0,
+        }
+    }
+
+    pub fn dual_width(self) -> usize {
+        match self {
+            Character => DUAL_COLS - 7,
+            Parenthetical => DUAL_COLS - 6,
+            _ => DUAL_COLS,
+        }
+    }
 }
 
 pub fn guess_element(line: &str, prev: Option<Element>) -> Element {

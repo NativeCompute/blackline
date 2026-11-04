@@ -876,3 +876,59 @@ fn the_desktop_chooses_character_colours_as_the_web_does() {
         assert_eq!(h.app.debug_settings_tab(), tab);
     }
 }
+
+// dual dialogue here---
+
+fn crossfire() -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.meta.title = "Crossfire".into();
+    d.push(Element::SceneHeading, "INT. KITCHEN - NIGHT");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "I said stop.");
+    d.push(Element::Character, "JONAS");
+    d.push(Element::Dialogue, "I'm not stopping!");
+    d.push(Element::Action, "Silence.");
+    d.reseed_ids();
+    d
+}
+
+#[test]
+fn ctrl_d_puts_two_speeches_side_by_side_and_back() {
+    let mut h = Harness::new();
+    h.load(crossfire());
+    let maria = h.app.doc().blocks[1].id;
+    let jonas = h.app.doc().blocks[3].id;
+    let before = (h.block_rect(maria).unwrap(), h.block_rect(jonas).unwrap());
+    assert!(before.1.top() > before.0.bottom(), "one after the other to begin with");
+    h.focus(jonas);
+    h.press(Key::D, Modifiers::COMMAND);
+    h.frames(3);
+    assert!(h.app.doc().blocks[3].dual);
+    let (m, j) = (h.block_rect(maria).unwrap(), h.block_rect(jonas).unwrap());
+    assert!((m.top() - j.top()).abs() < 2.0, "the cues share a row: {m:?} {j:?}");
+    assert!(j.left() > m.right(), "JONAS sits to the right of MARIA");
+    let silence = h.block_rect(h.app.doc().blocks[5].id).unwrap();
+    assert!(silence.top() > j.bottom(), "what follows starts below the pair");
+    h.idle();
+    assert!(h.saved_text().contains("**JONAS ^**"));
+    h.focus(maria);
+    h.press(Key::D, Modifiers::COMMAND);
+    h.frames(3);
+    assert!(!h.app.doc().blocks[3].dual);
+}
+
+#[test]
+fn enter_at_the_end_of_the_left_speech_moves_to_the_right_one() {
+    let mut h = Harness::new();
+    let mut d = crossfire();
+    d.blocks[3].dual = true;
+    h.load(d);
+    let left_line = h.app.doc().blocks[2].id;
+    h.focus(left_line);
+    h.press(Key::End, Modifiers::NONE);
+    h.press(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    assert_eq!(h.app.doc().blocks.len(), 6, "no block was added");
+    assert_eq!(h.app.focus_block(), Some(h.app.doc().blocks[3].id));
+}

@@ -1164,3 +1164,104 @@ fn a_script_without_the_new_things_writes_none_of_them() {
     d.blocks[1].remark = "   ".into();
     assert_eq!(storage::to_markdown(&d), md, "blank names and notes write nothing");
 }
+
+// dual dialogue here---
+
+fn argument() -> Document {
+    let mut d = Document::default();
+    d.blocks.clear();
+    d.meta.title = "Crossfire".into();
+    d.push(Element::SceneHeading, "INT. KITCHEN - NIGHT");
+    d.push(Element::Action, "They face each other across the table.");
+    d.push(Element::Character, "MARIA");
+    d.push(Element::Dialogue, "I said stop. I said it twice and you kept going anyway.");
+    d.push(Element::Character, "JONAS");
+    d.push(Element::Parenthetical, "(over her)");
+    d.push(Element::Dialogue, "I'm not stopping!");
+    d.push(Element::Action, "Silence.");
+    d.reseed_ids();
+    d
+}
+
+#[test]
+fn two_speeches_pair_and_unpair() {
+    let mut d = argument();
+    assert!(d.dual_pairs().is_empty());
+    let jonas = d.blocks[4].id;
+    assert_eq!(d.toggle_dual(jonas), Ok(true));
+    assert_eq!(d.dual_pairs(), vec![crate::model::DualPair { left: 2, right: 4, end: 7 }]);
+    let maria_line = d.blocks[3].id;
+    assert_eq!(d.toggle_dual(maria_line), Ok(false), "either speech can unpair them");
+    assert!(d.dual_pairs().is_empty());
+    let maria = d.blocks[2].id;
+    assert_eq!(d.toggle_dual(maria), Ok(true), "from the first speech it pairs with the next");
+    assert!(d.blocks[4].dual);
+    let silence = d.blocks[7].id;
+    assert!(d.toggle_dual(silence).is_err(), "action is not a speech");
+}
+
+#[test]
+fn a_dual_pair_prints_side_by_side_on_shared_rows() {
+    let mut d = argument();
+    d.blocks[4].dual = true;
+    let lines = export::compose(&d);
+    let rows: Vec<&export::Line> = lines.iter().filter(|l| l.dual).collect();
+    assert_eq!(rows[0].text, "MARIA");
+    assert_eq!(rows[0].indent, Element::Character.dual_indent());
+    let right = rows[0].right.as_ref().expect("JONAS sits on the same row");
+    assert_eq!(right.text, "JONAS");
+    assert_eq!(right.indent, crate::model::DUAL_RIGHT + Element::Character.dual_indent());
+    assert!(rows.iter().all(|l| l.text.chars().count() <= crate::model::DUAL_COLS));
+    let left_rows = 1 + crate::model::wrap("I said stop. I said it twice and you kept going anyway.", crate::model::DUAL_COLS).len();
+    assert_eq!(rows.len(), left_rows.max(3), "the pair is as tall as the taller speech");
+    let text = export::to_plain_text(&d);
+    assert!(text.lines().any(|l| l.contains("MARIA") && l.contains("JONAS")), "{text}");
+    let single = export::compose(&argument()).len();
+    assert!(lines.len() < single, "side by side takes fewer rows than one after the other");
+}
+
+#[test]
+fn a_dual_pair_is_never_split_across_pages() {
+    for filler in 40..56 {
+        let mut d = argument();
+        d.blocks.truncate(2);
+        for k in 0..filler {
+            d.push(Element::Action, &format!("Beat {k}."));
+        }
+        d.push(Element::Character, "MARIA");
+        d.push(Element::Dialogue, "One. Two. Three. Four. Five. Six. Seven. Eight. Nine. Ten.");
+        d.push(Element::Character, "JONAS");
+        d.push(Element::Dialogue, "Ten. Nine. Eight. Seven. Six. Five. Four. Three. Two. One.");
+        let n = d.blocks.len();
+        d.blocks[n - 2].dual = true;
+        d.reseed_ids();
+        let pages = export::paginate(&export::compose(&d));
+        let holding: Vec<usize> = pages
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.iter().any(|l| l.dual))
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(holding.len(), 1, "with {filler} beats the pair landed on pages {holding:?}");
+        assert!(pages.iter().all(|p| p.len() <= crate::model::LINES_PER_PAGE));
+    }
+}
+
+#[test]
+fn dual_dialogue_survives_fountain_and_final_draft() {
+    let mut d = argument();
+    d.blocks[4].dual = true;
+    let f = export::to_fountain(&d);
+    assert!(f.contains("@JONAS ^"), "{f}");
+    let back = crate::fountain::parse(&f);
+    assert_eq!(back.dual_pairs().len(), 1, "{f}");
+    let x = export::to_fdx(&d);
+    assert!(x.contains("<DualDialogue>"));
+    let back = crate::fountain::parse_fdx(&x);
+    assert_eq!(back.dual_pairs().len(), 1);
+    assert!(
+        !back.blocks.iter().any(|b| b.element == Element::Action && b.text == "MARIA"),
+        "the wrapper is not read as a line of action"
+    );
+    assert_eq!(back.blocks.len(), d.blocks.len());
+}

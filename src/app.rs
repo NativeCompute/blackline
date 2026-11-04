@@ -2932,7 +2932,9 @@ impl App {
                         .enumerate()
                         .map(|(k, e)| format!("{}  ·  {}", e.label(), self.keys_for(keys::Command::Element(k as u8 + 1))))
                         .collect();
-                    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                    let dual = format!("Dual dialogue  ·  {}", self.keys_for(keys::Command::DualDialogue));
+                    let mut refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                    refs.push(&dual);
                     ui.set_width(ui::menu_width(ui, &refs));
                     let mut rects = Vec::new();
                     for (k, e) in Element::ALL.iter().enumerate() {
@@ -2943,6 +2945,11 @@ impl App {
                             }
                             self.popover = None;
                         }
+                    }
+                    ui::separator(ui);
+                    if ui::menu_item(ui, &mut rects, &dual, Icon::Group, false) {
+                        self.popover = None;
+                        self.run(keys::Command::DualDialogue);
                     }
                 });
             })
@@ -3839,6 +3846,29 @@ impl App {
                 self.settings.page_px = px;
                 self.save_settings();
             }
+            C::DualDialogue => {
+                if !self.guard_edit() {
+                    return;
+                }
+                let Some(id) = self.ed.focus_block else {
+                    return;
+                };
+                let mut next = self.doc.clone();
+                match next.toggle_dual(id) {
+                    Ok(on) => {
+                        self.checkpoint();
+                        self.doc = next;
+                        self.mark_changed();
+                        if on {
+                            self.deck.ok("Dual dialogue", "The two speeches now sit side by side.");
+                        } else {
+                            self.deck.ok("One speech after the other", "");
+                        }
+                    }
+                    Err(why) => self.deck.say("Dual dialogue", why, Tone::Info),
+                }
+            }
+            C::AddNote | C::Reports => {}
             C::Element(n) => {
                 if !self.guard_edit() {
                     return;

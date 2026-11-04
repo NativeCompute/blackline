@@ -24,13 +24,16 @@ pub enum Command {
     Settings,
     Bigger,
     Smaller,
+    DualDialogue,
+    AddNote,
+    Reports,
     Element(u8),
 }
 
 use Command::*;
 
 impl Command {
-    pub const ALL: [Command; 25] = [
+    pub const ALL: [Command; 28] = [
         Save,
         NewScript,
         NewScene,
@@ -49,6 +52,9 @@ impl Command {
         Settings,
         Bigger,
         Smaller,
+        DualDialogue,
+        AddNote,
+        Reports,
         Element(1),
         Element(2),
         Element(3),
@@ -78,6 +84,9 @@ impl Command {
             Settings => "settings".into(),
             Bigger => "text_bigger".into(),
             Smaller => "text_smaller".into(),
+            DualDialogue => "dual_dialogue".into(),
+            AddNote => "add_note".into(),
+            Reports => "reports".into(),
             Element(n) => format!("element_{n}"),
         }
     }
@@ -106,15 +115,18 @@ impl Command {
             Settings => "Settings".into(),
             Bigger => "Larger page text".into(),
             Smaller => "Smaller page text".into(),
+            DualDialogue => "Dual dialogue".into(),
+            AddNote => "Add a note".into(),
+            Reports => "Reports".into(),
             Element(n) => Element::from_digit(n as usize).map(|e| e.label()).unwrap_or("Element").to_string(),
         }
     }
 
     pub fn group(self) -> &'static str {
         match self {
-            Save | NewScript | NewScene | NewAct | Undo | Redo | Find | FindScripts => "Writing",
+            Save | NewScript | NewScene | NewAct | Undo | Redo | Find | FindScripts | DualDialogue | AddNote => "Writing",
             QuickExport | ExportWindow => "Export",
-            NextView | FocusMode | ToggleLibrary | ToggleDetails | ToggleScenes | Settings | Bigger | Smaller => {
+            NextView | FocusMode | ToggleLibrary | ToggleDetails | ToggleScenes | Settings | Bigger | Smaller | Reports => {
                 "Views and panels"
             }
             Element(_) => "Elements",
@@ -145,6 +157,9 @@ impl Command {
             Settings => vec![c(cmd, Key::Comma)],
             Bigger => vec![c(cmd, Key::Plus), c(cmd, Key::Equals)],
             Smaller => vec![c(cmd, Key::Minus)],
+            DualDialogue => vec![c(cmd, Key::D)],
+            AddNote => vec![c(cmd, Key::M)],
+            Reports => vec![c(cmd_shift, Key::R)],
             Element(n) => {
                 let k = DIGITS[(n as usize).clamp(1, 7) - 1];
                 if web {

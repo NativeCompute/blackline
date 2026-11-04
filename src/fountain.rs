@@ -100,7 +100,7 @@ pub fn parse(text: &str) -> Document {
             continue;
         }
         if let Some(rest) = line.strip_prefix('@') {
-            doc.push(Element::Character, &rest.trim().trim_end_matches('^').trim().to_uppercase());
+            push_cue(&mut doc, &rest.trim().to_uppercase());
             speaking = true;
             prev_blank = false;
             continue;
@@ -116,7 +116,7 @@ pub fn parse(text: &str) -> Document {
             && upper == line
             && line.chars().any(|c| c.is_alphabetic())
         {
-            doc.push(Element::Character, line.trim_end_matches('^').trim());
+            push_cue(&mut doc, line);
             speaking = true;
         } else {
             let stripped = line.trim_start_matches('~').trim();
@@ -128,6 +128,14 @@ pub fn parse(text: &str) -> Document {
     doc.ensure_not_empty();
     doc.reseed_ids();
     doc
+}
+
+fn push_cue(doc: &mut Document, cue: &str) {
+    let dual = cue.trim_end().ends_with('^');
+    doc.push(Element::Character, cue.trim().trim_end_matches('^').trim());
+    if let Some(last) = doc.blocks.last_mut() {
+        last.dual = dual;
+    }
 }
 
 fn is_act_title(upper: &str) -> bool {
@@ -274,11 +282,27 @@ pub fn parse_fdx(text: &str) -> Document {
 
     let content = section(text, "<Content>", "</Content>").unwrap_or("");
     let mut rest = content;
+    let mut in_dual = false;
+    let mut cues_in_dual = 0usize;
     while let Some(a) = rest.find("<Paragraph") {
+        if in_dual {
+            if let Some(d) = rest.find("</DualDialogue>").filter(|d| *d < a) {
+                in_dual = false;
+                cues_in_dual = 0;
+                rest = &rest[d + "</DualDialogue>".len()..];
+                continue;
+            }
+        }
         let after = &rest[a..];
         let Some(open_end) = after.find('>') else { break };
         let tag = &after[..open_end];
         let body_start = &after[open_end + 1..];
+        if let Some(inner) = body_start.trim_start().strip_prefix("<DualDialogue") {
+            in_dual = true;
+            cues_in_dual = 0;
+            rest = inner.find('>').map(|k| &inner[k + 1..]).unwrap_or("");
+            continue;
+        }
         let (summary, body_from) = match (body_start.find("<SceneProperties"), body_start.find("</Paragraph>")) {
             (Some(sp), Some(end)) if sp < end => match body_start.find("</SceneProperties>") {
                 Some(spe) => (
@@ -317,6 +341,12 @@ pub fn parse_fdx(text: &str) -> Document {
             words.to_string()
         };
         doc.push(element, &text);
+        if in_dual && element == Element::Character {
+            cues_in_dual += 1;
+            if let Some(last) = doc.blocks.last_mut() {
+                last.dual = cues_in_dual >= 2;
+            }
+        }
         if let (Some(sum), Some(last)) = (summary, doc.blocks.last_mut()) {
             if last.element == Element::SceneHeading {
                 last.note = sum.trim().to_string();

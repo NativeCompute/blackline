@@ -68,12 +68,35 @@ pub fn show(
         }
     }
 
-    let mut speaking: Vec<Vec<Option<egui::Color32>>> = Vec::with_capacity(pages.len());
+    type Voice = Option<egui::Color32>;
+    let mut speaking: Vec<Vec<(Voice, Voice)>> = Vec::with_capacity(pages.len());
     {
         let mut who: Option<String> = None;
+        let mut left_who: Option<String> = None;
+        let mut right_who: Option<String> = None;
+        let colour = |w: &Option<String>| w.as_ref().and_then(|n| voices.and_then(|m| m.get(n))).copied();
+        let track = |w: &mut Option<String>, line: &Line| {
+            if line.element == Some(Element::Character) {
+                let n = base_character(&line.text);
+                if !n.is_empty() {
+                    *w = Some(n);
+                }
+            }
+        };
         for page in &pages {
             let mut row = Vec::with_capacity(page.len());
             for line in page {
+                if line.dual {
+                    who = None;
+                    track(&mut left_who, line);
+                    if let Some(r) = &line.right {
+                        track(&mut right_who, r);
+                    }
+                    row.push((colour(&left_who), colour(&right_who)));
+                    continue;
+                }
+                left_who = None;
+                right_who = None;
                 match line.element {
                     Some(Element::Character) => {
                         let n = base_character(&line.text);
@@ -84,7 +107,7 @@ pub fn show(
                     Some(Element::Dialogue) | Some(Element::Parenthetical) | None => {}
                     _ => who = None,
                 }
-                row.push(who.as_ref().and_then(|n| voices.and_then(|m| m.get(n))).copied());
+                row.push((colour(&who), None));
             }
             speaking.push(row);
         }
@@ -198,72 +221,79 @@ pub fn show(
             );
         }
         let page: &Vec<Line> = &pages[n - 1];
-        for (row, line) in page.iter().enumerate().take(LINES_PER_PAGE + 5) {
-            if line.text.trim().is_empty() {
-                continue;
-            }
+        for (row, whole) in page.iter().enumerate().take(LINES_PER_PAGE + 5) {
             let y = body_top + row as f32 * line_h;
-            let x = text_left + line.indent as f32 * char_w;
-            let is_heading = matches!(line.element, Some(Element::SceneHeading) | Some(Element::Act));
-            let color = match (speaking[n - 1][row], line.element) {
-                (Some(v), _) => v,
-                (None, Some(Element::Parenthetical)) | (None, Some(Element::Transition)) => {
-                    theme::mix(ink, p.text_dim, 0.4)
+            let (left_voice, right_voice) = speaking[n - 1][row];
+            let mut halves: Vec<(&Line, Option<egui::Color32>, usize)> = vec![(whole, left_voice, 0)];
+            if let Some(r) = &whole.right {
+                halves.push((r, right_voice, 1));
+            }
+            for (line, voice, half) in halves {
+                if line.text.trim().is_empty() {
+                    continue;
                 }
-                _ => ink,
-            };
-            if let Some(block) = line.block {
-                let hit = Rect::from_min_size(
+                let x = text_left + line.indent as f32 * char_w;
+                let is_heading = matches!(line.element, Some(Element::SceneHeading) | Some(Element::Act));
+                let color = match (voice, line.element) {
+                    (Some(v), _) => v,
+                    (None, Some(Element::Parenthetical)) | (None, Some(Element::Transition)) => {
+                        theme::mix(ink, p.text_dim, 0.4)
+                    }
+                    _ => ink,
+                };
+                if let Some(block) = line.block {
+                    let hit = Rect::from_min_size(
+                        Pos2::new(x, y),
+                        Vec2::new(line.text.chars().count() as f32 * char_w, line_h),
+                    );
+                    let resp = ui.interact(hit, egui::Id::new(("ns-page-line", n, row, half)), Sense::click());
+                    let hot = anim::ease(ui.ctx(), resp.id, resp.hovered(), anim::HOVER);
+                    if hot > 0.01 {
+                        ui.painter().rect_filled(
+                            hit.expand2(Vec2::new(3.0, 0.0)),
+                            egui::Rounding::ZERO,
+                            theme::wash(p.primary, (40.0 * hot) as u8),
+                        );
+                    }
+                    if resp.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if resp.on_hover_text("Click to write this line").clicked() {
+                        jump = Some(block);
+                    }
+                }
+                let drawn = ui.painter().text(
                     Pos2::new(x, y),
-                    Vec2::new(line.text.chars().count() as f32 * char_w, line_h),
+                    egui::Align2::LEFT_TOP,
+                    &line.text,
+                    if is_heading { bold.clone() } else { font.clone() },
+                    a(color),
                 );
-                let resp = ui.interact(hit, egui::Id::new(("ns-page-line", n, row)), Sense::click());
-                let hot = anim::ease(ui.ctx(), resp.id, resp.hovered(), anim::HOVER);
-                if hot > 0.01 {
-                    ui.painter().rect_filled(
-                        hit.expand2(Vec2::new(3.0, 0.0)),
-                        egui::Rounding::ZERO,
-                        theme::wash(p.primary, (40.0 * hot) as u8),
+                if line.element == Some(Element::Act) {
+                    let under = y + line_h * 0.92;
+                    ui.painter().line_segment(
+                        [Pos2::new(drawn.left(), under), Pos2::new(drawn.right(), under)],
+                        egui::Stroke::new((line_h * 0.06).max(0.8), a(color)),
                     );
                 }
-                if resp.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
-                if resp.on_hover_text("Click to write this line").clicked() {
-                    jump = Some(block);
-                }
-            }
-            let drawn = ui.painter().text(
-                Pos2::new(x, y),
-                egui::Align2::LEFT_TOP,
-                &line.text,
-                if is_heading { bold.clone() } else { font.clone() },
-                a(color),
-            );
-            if line.element == Some(Element::Act) {
-                let under = y + line_h * 0.92;
-                ui.painter().line_segment(
-                    [Pos2::new(drawn.left(), under), Pos2::new(drawn.right(), under)],
-                    egui::Stroke::new((line_h * 0.06).max(0.8), a(color)),
-                );
-            }
-            if scene_numbers {
-                if let Some(num) = line.scene {
-                    let label = format!("{num}");
-                    ui.painter().text(
-                        Pos2::new(text_left - 0.5 * inch, y),
-                        egui::Align2::RIGHT_TOP,
-                        &label,
-                        bold.clone(),
-                        a(ink),
-                    );
-                    ui.painter().text(
-                        Pos2::new(text_left + PAGE_COLS as f32 * char_w + 0.2 * inch, y),
-                        egui::Align2::LEFT_TOP,
-                        &label,
-                        bold.clone(),
-                        a(ink),
-                    );
+                if scene_numbers {
+                    if let Some(num) = line.scene {
+                        let label = format!("{num}");
+                        ui.painter().text(
+                            Pos2::new(text_left - 0.5 * inch, y),
+                            egui::Align2::RIGHT_TOP,
+                            &label,
+                            bold.clone(),
+                            a(ink),
+                        );
+                        ui.painter().text(
+                            Pos2::new(text_left + PAGE_COLS as f32 * char_w + 0.2 * inch, y),
+                            egui::Align2::LEFT_TOP,
+                            &label,
+                            bold.clone(),
+                            a(ink),
+                        );
+                    }
                 }
             }
         }

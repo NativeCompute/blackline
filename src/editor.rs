@@ -4,7 +4,7 @@ use eframe::egui::{self, text::CCursor, Key, Modifiers, Pos2, Rect, Sense, Vec2}
 
 use crate::anim;
 use crate::caret;
-use crate::model::{act_title, base_character, complete, guess_element, Document, Element, PAGE_COLS};
+use crate::model::{act_title, base_character, complete, guess_element, Document, Element, DUAL_COLS, DUAL_RIGHT, PAGE_COLS};
 use crate::theme::{self, pal};
 
 pub const GUTTER: f32 = 74.0;
@@ -111,6 +111,18 @@ enum Act {
     Stay { id: u64, at: usize },
 }
 
+#[derive(Clone, Copy)]
+struct Geo {
+    outer: bool,
+    first: bool,
+    lead: f32,
+    origin: f32,
+    left: f32,
+    right: f32,
+    tags: bool,
+    hop: bool,
+}
+
 pub fn block_id(b: u64) -> egui::Id {
     egui::Id::new(("ns-block", b))
 }
@@ -167,7 +179,7 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, st: &mut EditorState, view: &
 
 #[allow(clippy::too_many_arguments)]
 fn page_body(
-    ui: &mut egui::Ui,
+    outer: &mut egui::Ui,
     doc: &mut Document,
     st: &mut EditorState,
     view: &View,
@@ -179,7 +191,7 @@ fn page_body(
 ) -> bool {
     let p = pal();
     let mut changed = false;
-    let col = ui.max_rect();
+    let col = outer.max_rect();
     let content_left = col.left();
     let mut any_focus = false;
 
@@ -190,8 +202,72 @@ fn page_body(
     let needle = view.find.map(|s| s.to_lowercase()).filter(|s| !s.is_empty());
     let act_notes = act_notes(doc, view.page_starts, view.pages);
     let mut speaker: Option<String> = None;
+    let pairs = doc.dual_pairs();
+    let mut cols: Option<(egui::Ui, egui::Ui, usize, usize, f32)> = None;
+    let x0 = content_left + GUTTER;
+    let dual_w = DUAL_COLS as f32 * char_w;
+    let rx = x0 + DUAL_RIGHT as f32 * char_w;
 
     for i in 0..doc.blocks.len() {
+        // dual pair opens here---
+        if let Some(pair) = pairs.iter().find(|p| p.left == i).copied() {
+            if view.page_breaks {
+                if let Some(n) = (pair.left..pair.end).find_map(|k| view.page_starts.get(&doc.blocks[k].id)) {
+                    page_rule(outer, content_left + GUTTER, col.right() - 10.0, *n);
+                }
+            }
+            if i > 0 {
+                outer.add_space(Element::Character.blank_lines_before() as f32 * row_h * 0.62 + 2.0);
+            }
+            let top = outer.cursor().top();
+            let mk = |outer: &mut egui::Ui, x: f32| {
+                outer.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(Rect::from_min_size(Pos2::new(x, top), Vec2::new(dual_w + 4.0, 100_000.0)))
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                )
+            };
+            let left_ui = mk(outer, x0);
+            let right_ui = mk(outer, rx);
+            cols = Some((left_ui, right_ui, pair.right, pair.end, top));
+        }
+        let geo = match &cols {
+            Some((_, _, right, _, _)) if i < *right => Geo {
+                outer: false,
+                first: i + 1 == 1 || doc.blocks[i].element == Element::Character,
+                lead: 0.0,
+                origin: x0,
+                left: content_left + 2.0,
+                right: x0 + dual_w + 6.0,
+                tags: true,
+                hop: i + 1 == *right,
+            },
+            Some((_, _, _, end, _)) if i < *end => Geo {
+                outer: false,
+                first: doc.blocks[i].element == Element::Character,
+                lead: 0.0,
+                origin: rx,
+                left: rx - 6.0,
+                right: col.right(),
+                tags: false,
+                hop: false,
+            },
+            _ => Geo {
+                outer: true,
+                first: false,
+                lead: GUTTER,
+                origin: x0,
+                left: content_left + 2.0,
+                right: col.right(),
+                tags: true,
+                hop: false,
+            },
+        };
+        let ui: &mut egui::Ui = match cols.as_mut() {
+            Some((l, _, right, _, _)) if i < *right => l,
+            Some((_, r, _, end, _)) if i < *end => r,
+            _ => &mut *outer,
+        };
         let bid = doc.blocks[i].id;
         let element = doc.blocks[i].element;
         match element {
@@ -212,14 +288,14 @@ fn page_body(
         let dimmed = view.focus_mode && live_scene.is_some() && in_scene != live_scene;
 
         // printed page begins here---
-        if view.page_breaks {
+        if view.page_breaks && geo.outer {
             if let Some(n) = view.page_starts.get(&bid) {
                 page_rule(ui, content_left + GUTTER, col.right() - 10.0, *n);
             }
         }
 
         // vertical rhythm between here---
-        if i > 0 {
+        if i > 0 && !geo.first {
             ui.add_space(element.blank_lines_before() as f32 * row_h * 0.62 + 2.0);
         }
 
@@ -249,6 +325,8 @@ fn page_body(
                         at: split_at,
                         same: !is_act,
                     });
+                } else if geo.hop && pos == Some(len) && inp.consume_key(Modifiers::NONE, Key::Enter) {
+                    acts.push(Act::FocusNext { id: bid });
                 } else if inp.consume_key(Modifiers::NONE, Key::Enter) {
                     acts.push(Act::Split {
                         id: bid,
@@ -303,8 +381,13 @@ fn page_body(
 
         // row here---
         let bg_idx = ui.painter().add(egui::Shape::Noop);
-        let indent_px = element.indent_cols() as f32 * char_w;
-        let width_px = element.width_cols() as f32 * char_w;
+        let (indent_cols, width_cols) = if geo.outer {
+            (element.indent_cols(), element.width_cols())
+        } else {
+            (element.dual_indent(), element.dual_width())
+        };
+        let indent_px = indent_cols as f32 * char_w;
+        let width_px = width_cols as f32 * char_w;
         let ink = match voice {
             Some(v) if element == Element::Parenthetical => theme::mix(v, p.text_dim, 0.35),
             Some(v) => v,
@@ -315,7 +398,7 @@ fn page_body(
         let row_top = ui.cursor().top();
         let lay_row = |ui: &mut egui::Ui, doc: &mut Document| {
             ui.horizontal(|ui| {
-                ui.add_space(GUTTER + indent_px);
+                ui.add_space(geo.lead + indent_px);
                 let block = &mut doc.blocks[i];
                 egui::TextEdit::multiline(&mut block.text)
                     .id(id)
@@ -345,13 +428,14 @@ fn page_body(
         } else if opening {
             let known = st.heights.get(&bid).copied().unwrap_or(row_h + 2.0);
             let grow = anim::bounce(raw);
+            let wide = ui.max_rect().width();
             let (slot, _) = ui.allocate_exact_size(
-                Vec2::new(col.width(), (known * grow).max(0.0)),
+                Vec2::new(wide, (known * grow).max(0.0)),
                 Sense::hover(),
             );
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
-                    .max_rect(Rect::from_min_size(slot.min, Vec2::new(col.width(), known.max(row_h) + 40.0)))
+                    .max_rect(Rect::from_min_size(slot.min, Vec2::new(wide, known.max(row_h) + 40.0)))
                     .layout(egui::Layout::top_down(egui::Align::Min)),
             );
             child.set_clip_rect(slot.intersect(ui.clip_rect()));
@@ -388,7 +472,7 @@ fn page_body(
         let mut under: Vec<egui::Shape> = Vec::new();
         if view.element_colors && !dimmed && element != Element::Act {
             let words = output.galley.rect.translate(output.galley_pos.to_vec2());
-            let text_left = content_left + GUTTER + indent_px;
+            let text_left = geo.origin + indent_px;
             let right = if doc.blocks[i].text.is_empty() {
                 text_left + char_w * 8.0
             } else {
@@ -396,7 +480,7 @@ fn page_body(
             };
             let band = Rect::from_min_max(
                 Pos2::new(text_left - 7.0, row.top() - 1.5),
-                Pos2::new((right + 7.0).min(col.right() - 2.0), row.bottom() + 1.5),
+                Pos2::new((right + 7.0).min(geo.right - 2.0), row.bottom() + 1.5),
             );
             let (fill, tick) = match voice {
                 Some(v) => (theme::tint(v, if p.dark { 0.035 } else { 0.05 }), v),
@@ -416,8 +500,8 @@ fn page_body(
         }
         if lit > 0.01 && element != Element::Act {
             let plate = Rect::from_min_max(
-                Pos2::new(content_left + 2.0, row.top() - 6.0),
-                Pos2::new(col.right(), row.bottom() + 6.0),
+                Pos2::new(geo.left, row.top() - 6.0),
+                Pos2::new(geo.right, row.bottom() + 6.0),
             );
             under.push(theme::grad_poly_shape(
                 &theme::rounded_poly(plate, theme::R_CARD),
@@ -516,7 +600,7 @@ fn page_body(
             }
         } else {
             let tag = anim::ease(ui.ctx(), ("ns-tag", bid), focused || response.hovered(), anim::HOVER);
-            if tag > 0.02 {
+            if tag > 0.02 && geo.tags {
                 let color = theme::element_color(element);
                 theme::tracked_text(
                     ui.painter(),
@@ -553,14 +637,34 @@ fn page_body(
                 }
             }
         }
+
+        // dual pair closes here---
+        if let Some((l, r, _, end, top)) = &cols {
+            if i + 1 == *end {
+                let bottom = l.min_rect().bottom().max(r.min_rect().bottom()).max(*top);
+                let top = *top;
+                cols = None;
+                outer.allocate_exact_size(Vec2::new(col.width(), bottom - top), Sense::hover());
+                let bracket = Rect::from_min_max(Pos2::new(content_left + 8.0, top + 2.0), Pos2::new(content_left + 10.0, bottom - 2.0));
+                outer.painter().rect_filled(bracket, egui::Rounding::same(1.0), theme::wash(p.primary_light, 120));
+                theme::tracked_text(
+                    outer.painter(),
+                    Pos2::new(content_left + 16.0, top + row_h * 0.5),
+                    "DUAL",
+                    theme::font_semi(theme::T_MICRO - 1.0),
+                    theme::wash(p.primary_light, 200),
+                    0.9,
+                );
+            }
+        }
     }
 
     if !any_focus && st.focus_block.and_then(|id| doc.index_of(id)).is_none() {
         st.focus_block = doc.blocks.last().map(|b| b.id);
     }
 
-    let filler = ui.allocate_response(
-        egui::vec2(ui.available_width().max(1.0), 90.0),
+    let filler = outer.allocate_response(
+        egui::vec2(outer.available_width().max(1.0), 90.0),
         Sense::click(),
     );
     if filler.clicked() {
@@ -842,6 +946,9 @@ fn apply(doc: &mut Document, st: &mut EditorState, act: Act) -> bool {
                 return false;
             }
             doc.blocks[i].element = element;
+            if element != Element::Character {
+                doc.blocks[i].dual = false;
+            }
             if element.is_upper() {
                 let upper = doc.blocks[i].text.to_uppercase();
                 doc.blocks[i].text = upper;
