@@ -158,7 +158,7 @@ impl Command {
             Bigger => vec![c(cmd, Key::Plus), c(cmd, Key::Equals)],
             Smaller => vec![c(cmd, Key::Minus)],
             DualDialogue => vec![c(cmd, Key::D)],
-            AddNote => vec![c(cmd, Key::M)],
+            AddNote => vec![c(cmd, Key::M), c(cmd, Key::K)],
             Reports => vec![c(cmd_shift, Key::R)],
             Element(n) => {
                 let k = DIGITS[(n as usize).clamp(1, 7) - 1];

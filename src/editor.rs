@@ -29,6 +29,7 @@ pub struct EditorState {
     seen: std::collections::HashSet<u64>,
     heights: HashMap<u64, f32>,
     pub fresh: bool,
+    pub note_request: Option<u64>,
 }
 
 impl Default for EditorState {
@@ -42,6 +43,7 @@ impl Default for EditorState {
             seen: Default::default(),
             heights: Default::default(),
             fresh: true,
+            note_request: None,
         }
     }
 }
@@ -80,6 +82,7 @@ pub struct View<'a> {
     pub element_colors: bool,
     pub char_colors: Option<&'a HashMap<String, egui::Color32>>,
     pub pages: usize,
+    pub margin: f32,
 }
 
 pub fn set_element(doc: &mut Document, st: &mut EditorState, element: Element) -> bool {
@@ -121,6 +124,18 @@ struct Geo {
     right: f32,
     tags: bool,
     hop: bool,
+}
+
+fn keep_remark(into: &mut crate::model::Block, from: &crate::model::Block) {
+    let extra = from.remark.trim();
+    if extra.is_empty() {
+        return;
+    }
+    if into.remark.trim().is_empty() {
+        into.remark = extra.to_string();
+    } else {
+        into.remark = format!("{} / {extra}", into.remark.trim());
+    }
 }
 
 pub fn block_id(b: u64) -> egui::Id {
@@ -613,6 +628,52 @@ fn page_body(
             }
         }
 
+        // note in the margin here---
+        let remark = doc.blocks[i].remark.trim().to_string();
+        let mut wants_note = false;
+        response.context_menu(|ui| {
+            let label = if remark.is_empty() { "Add a note" } else { "Edit the note" };
+            if crate::ui::menu_item(ui, &mut Vec::new(), label, crate::icons::Icon::Pencil, false) {
+                wants_note = true;
+                ui.close_menu();
+            }
+        });
+        if !remark.is_empty() && element != Element::Act {
+            let dot = Rect::from_center_size(Pos2::new(col.right() - 12.0, mid_y), Vec2::splat(16.0));
+            let hit = ui.interact(dot, egui::Id::new(("ns-note", bid)), Sense::click());
+            let hot = anim::ease(ui.ctx(), hit.id, hit.hovered(), anim::HOVER);
+            ui.painter().rect_filled(
+                Rect::from_center_size(dot.center(), Vec2::splat(7.0 + 2.0 * hot)),
+                egui::Rounding::same(1.5),
+                theme::mix(p.primary, p.primary_light, hot),
+            );
+            if hit.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if view.margin >= 170.0 {
+                let wrap_w = (view.margin - 34.0).min(260.0);
+                let galley = ui.painter().layout(
+                    remark.clone(),
+                    theme::font(theme::T_SM),
+                    theme::wash(p.text_dim, if dimmed { 90 } else { 230 }),
+                    wrap_w,
+                );
+                let at = Pos2::new(col.right() + 18.0, row.top());
+                ui.painter().rect_filled(
+                    Rect::from_min_size(Pos2::new(at.x - 9.0, at.y + 2.0), Vec2::new(2.0, galley.rect.height().max(row_h) - 4.0)),
+                    egui::Rounding::same(1.0),
+                    theme::wash(p.primary, 140),
+                );
+                ui.painter().galley(at, galley, p.text_dim);
+            }
+            if hit.on_hover_text(&remark).clicked() {
+                wants_note = true;
+            }
+        }
+        if wants_note {
+            st.note_request = Some(bid);
+        }
+
         // deferred focus here---
         if let Some((fid, target)) = st.pending_focus {
             if fid == bid {
@@ -969,13 +1030,15 @@ fn apply(doc: &mut Document, st: &mut EditorState, act: Act) -> bool {
             let prev_len = caret::char_len(&doc.blocks[i - 1].text);
 
             if cur_empty {
-                doc.blocks.remove(i);
+                let cur = doc.blocks.remove(i);
+                keep_remark(&mut doc.blocks[i - 1], &cur);
                 st.focus(prev_id, Caret::At(prev_len));
                 doc.ensure_not_empty();
                 true
             } else if same_kind {
                 let cur = doc.blocks.remove(i);
                 doc.blocks[i - 1].text.push_str(&cur.text);
+                keep_remark(&mut doc.blocks[i - 1], &cur);
                 st.focus(prev_id, Caret::At(prev_len));
                 true
             } else {
@@ -996,6 +1059,7 @@ fn apply(doc: &mut Document, st: &mut EditorState, act: Act) -> bool {
                 let next = doc.blocks.remove(i + 1);
                 let at = caret::char_len(&doc.blocks[i].text);
                 doc.blocks[i].text.push_str(&next.text);
+                keep_remark(&mut doc.blocks[i], &next);
                 st.focus(id, Caret::At(at));
                 true
             } else {

@@ -932,3 +932,29 @@ fn enter_at_the_end_of_the_left_speech_moves_to_the_right_one() {
     assert_eq!(h.app.doc().blocks.len(), 6, "no block was added");
     assert_eq!(h.app.focus_block(), Some(h.app.doc().blocks[3].id));
 }
+
+// script notes here---
+
+#[test]
+fn ctrl_m_adds_a_note_that_lands_in_the_file() {
+    let mut h = Harness::new();
+    h.load(crossfire());
+    let line = h.app.doc().blocks[2].id;
+    h.focus(line);
+    h.press(Key::M, Modifiers::COMMAND);
+    h.frames(3);
+    assert_eq!(h.app.debug_note_open(), Some(line));
+    h.type_text("say it softer");
+    h.press(Key::Enter, Modifiers::COMMAND);
+    h.frames(2);
+    assert_eq!(h.app.debug_note_open(), None);
+    assert_eq!(h.app.doc().blocks[2].remark, "say it softer");
+    h.idle();
+    assert!(h.saved_text().contains("> I said stop. [[say it softer]]"), "{}", h.saved_text());
+    h.focus(line);
+    h.press(Key::M, Modifiers::COMMAND);
+    h.frames(3);
+    h.press(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert_eq!(h.app.doc().blocks[2].remark, "say it softer", "Esc keeps the note as it was");
+}

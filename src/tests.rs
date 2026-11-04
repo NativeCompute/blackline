@@ -675,6 +675,7 @@ fn a_pdf_of_some_pages_has_just_those_pages() {
             pages: Some(vec![2]),
             voices: Some(inks),
             scene_numbers: true,
+            notes: false,
         },
     )
     .unwrap();
@@ -1264,4 +1265,49 @@ fn dual_dialogue_survives_fountain_and_final_draft() {
         "the wrapper is not read as a line of action"
     );
     assert_eq!(back.blocks.len(), d.blocks.len());
+}
+
+// script notes here---
+
+#[test]
+fn notes_ride_through_fountain_on_every_kind_of_line() {
+    let mut d = argument();
+    d.blocks[1].remark = "shorter".into();
+    d.blocks[4].dual = true;
+    d.blocks[4].remark = "louder".into();
+    d.blocks[5].remark = "maybe cut".into();
+    let f = export::to_fountain(&d);
+    assert!(f.contains("@JONAS ^ [[louder]]"), "{f}");
+    assert!(f.contains("(over her) [[maybe cut]]"), "{f}");
+    let back = crate::fountain::parse(&f);
+    let kinds: Vec<Element> = back.blocks.iter().map(|b| b.element).collect();
+    assert_eq!(kinds, d.blocks.iter().map(|b| b.element).collect::<Vec<_>>(), "{f}");
+    let remarks: Vec<&str> = back.blocks.iter().map(|b| b.remark.as_str()).collect();
+    assert_eq!(remarks, d.blocks.iter().map(|b| b.remark.as_str()).collect::<Vec<_>>());
+    assert!(back.blocks[4].dual);
+    assert!(back.blocks.iter().all(|b| !b.text.contains("[[")));
+}
+
+#[test]
+fn a_fountain_note_on_its_own_line_belongs_to_the_line_before() {
+    let f = "INT. HOUSE - DAY\n\nShe waits.\n[[too quiet?]]\n\nHe knocks.\n\n[[multi\nline note]]\nGone.\n";
+    let d = crate::fountain::parse(f);
+    let waits = d.blocks.iter().find(|b| b.text == "She waits.").unwrap();
+    assert_eq!(waits.remark, "too quiet?");
+    assert!(d.blocks.iter().all(|b| !b.text.contains("too quiet")));
+    assert!(d.blocks.iter().all(|b| !b.text.contains("line note")), "notes across lines are still left out");
+}
+
+#[test]
+fn the_pdf_can_list_every_note_with_its_page() {
+    let mut d = argument();
+    d.blocks[1].remark = "the kettle".into();
+    let rows = export::endnotes(&d);
+    assert_eq!(rows[0], (true, "NOTES".to_string()));
+    assert!(rows.iter().any(|(bold, t)| *bold && t.starts_with("PAGE 1 — They face")));
+    assert!(rows.iter().any(|(_, t)| t.trim() == "the kettle"));
+    let with = export::pdf_bytes(&d, &export::PdfOptions { notes: true, ..Default::default() }).unwrap();
+    let without = export::pdf_bytes(&d, &export::PdfOptions::default()).unwrap();
+    assert!(with.len() > without.len());
+    assert!(export::endnotes(&argument()).is_empty(), "no notes, no notes page");
 }
