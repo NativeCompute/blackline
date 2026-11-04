@@ -29,6 +29,7 @@ mod keyboard;
 mod notes;
 mod reports;
 mod imported;
+pub mod onboarding;
 mod voices;
 
 const SNAPSHOT_IDLE: Duration = Duration::from_millis(700);
@@ -203,6 +204,7 @@ pub struct App {
     report: crate::report::Report,
     report_tab: usize,
     update_rect: Rect,
+    tour: Option<onboarding::Tour>,
     imported: Option<imported::Imported>,
     report_rows: Vec<(u64, Rect)>,
     library_button: Rect,
@@ -240,6 +242,7 @@ impl App {
         ctx.set_zoom_factor(settings.font_scale);
 
         let entries = store.list();
+        let first_run = settings.fresh && entries.is_empty() && store.team().is_none();
         let home = store.team().is_some() || !entries.is_empty();
         let (doc, path) = match entries.first() {
             Some(_) if home => (starter_document(), None),
@@ -333,6 +336,7 @@ impl App {
             report: crate::report::Report::default(),
             report_tab: 0,
             update_rect: Rect::NOTHING,
+            tour: None,
             imported: None,
             report_rows: Vec::new(),
             library_button: Rect::NOTHING,
@@ -351,6 +355,9 @@ impl App {
         app.ed.focus_block = app.doc.blocks.first().map(|b| b.id);
         app.ed.pending_focus = app.doc.blocks.first().map(|b| (b.id, Caret::End));
         app.refresh_layout(true);
+        if let Some(kind) = onboarding::wanted(&app.settings.onboarded, first_run) {
+            app.start_tour(kind);
+        }
         app
     }
 
@@ -3839,7 +3846,9 @@ impl App {
 
         chrome::backdrop(ctx, self.window_ground());
 
-        if self.key_capture.is_some() {
+        if self.tour.is_some() {
+            self.tour_keys(ctx);
+        } else if self.key_capture.is_some() {
             self.capture_chord(ctx);
         } else if !self.deck.asking() {
             if self.home {
@@ -3884,6 +3893,7 @@ impl App {
             self.note_window(ctx);
         }
         self.popovers(ctx);
+        self.tour_overlay(ctx);
         chrome::resize_handles(ctx);
 
         if let Some(answer) = self.deck.show(ctx) {

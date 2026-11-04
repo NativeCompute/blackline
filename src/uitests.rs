@@ -26,7 +26,7 @@ fn sandbox(settings: &str) -> std::sync::MutexGuard<'static, ()> {
     std::env::set_var("XDG_DATA_HOME", &dir);
     let _ = std::fs::write(
         dir.join("blackline/settings.conf"),
-        format!("splash = no\nanimations = no\nautosave_ms = 150\n{settings}"),
+        format!("splash = no\nanimations = no\nautosave_ms = 150\nonboarded = blue-pages\n{settings}"),
     );
     guard
 }
@@ -1149,4 +1149,30 @@ fn home_says_when_an_update_is_out_until_it_is_dismissed() {
     h.app.debug_set_update(newer("9.9.1"));
     h.frames(3);
     assert!(h.app.debug_update_rect().width() > 300.0, "a later version speaks up again");
+}
+
+#[test]
+fn whats_new_shows_once_takes_the_keys_and_can_be_replayed() {
+    use crate::app::onboarding::Kind;
+    let mut h = Harness::with(1320.0, 900.0, "onboarded = \n");
+    assert_eq!(h.app.debug_tour(), Some((Kind::New, 0)));
+    let before = h.app.doc().clone();
+    h.type_text("typed while the tour was up");
+    h.press(Key::Enter, Modifiers::NONE);
+    assert_eq!(h.app.debug_tour(), Some((Kind::New, 1)));
+    h.press(Key::ArrowLeft, Modifiers::NONE);
+    assert_eq!(h.app.debug_tour(), Some((Kind::New, 0)));
+    assert_eq!(h.app.doc().blocks, before.blocks, "nothing reaches the script underneath");
+    h.press(Key::Escape, Modifiers::NONE);
+    assert_eq!(h.app.debug_tour(), None);
+    h.idle();
+    assert_eq!(storage::read_settings().onboarded, "blue-pages", "seen, so it will not show again");
+
+    h.app.debug_start_tour();
+    h.frames(1);
+    for _ in 0..7 {
+        assert!(h.app.debug_tour().is_some());
+        h.press(Key::Enter, Modifiers::NONE);
+    }
+    assert_eq!(h.app.debug_tour(), None, "seven steps, then back to writing");
 }

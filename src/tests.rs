@@ -388,7 +388,7 @@ fn the_pdf_can_carry_scene_numbers() {
 
 #[test]
 fn settings_round_trip_and_old_look_keys_are_ignored() {
-    let mut s = Settings::default();
+    let mut s = Settings { fresh: false, ..Default::default() };
     assert!(!s.light_mode, "dark by default");
     s.light_mode = true;
     s.sort_by = SortBy::Length;
@@ -1607,4 +1607,17 @@ fn blacklines_own_exports_import_with_nothing_to_report() {
     assert!(issues.is_empty(), "{issues:?}");
     let (_, issues) = fountain::parse_fdx_checked(&export::to_fdx(&d));
     assert!(issues.is_empty(), "{issues:?}");
+}
+
+#[test]
+fn the_tour_goes_to_new_people_and_whats_new_to_people_updating() {
+    use crate::app::onboarding::{wanted, Kind};
+    assert_eq!(wanted("", true), Some(Kind::Full));
+    assert_eq!(wanted("", false), Some(Kind::New), "an existing settings file without the key is an update");
+    assert_eq!(wanted("blue-pages", false), None);
+    assert_eq!(wanted("blue-pages", true), None);
+    let s = crate::settings::Settings::parse("light_mode = no\n");
+    assert!(!s.fresh);
+    assert!(crate::settings::Settings::default().fresh);
+    assert!(s.serialize().contains("onboarded = \n") || s.serialize().contains("onboarded ="));
 }

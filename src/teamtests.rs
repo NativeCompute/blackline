@@ -155,7 +155,7 @@ impl Store for Memory {
         self.shared.borrow_mut().signed_out = true;
     }
     fn read_settings(&mut self) -> Settings {
-        Settings::parse("splash = no\nanimations = no\nautosave_ms = 150\n")
+        Settings::parse("splash = no\nanimations = no\nautosave_ms = 150\nonboarded = blue-pages\n")
     }
     fn write_settings(&mut self, s: &Settings) -> Result<(), String> {
         self.shared.borrow_mut().settings = Some(s.serialize());
