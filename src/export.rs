@@ -704,7 +704,7 @@ pub fn endnotes(doc: &Document) -> Vec<(bool, String)> {
 pub fn page_of_block(doc: &Document, id: u64) -> Option<usize> {
     paginate(&compose(doc))
         .iter()
-        .position(|pg| pg.iter().any(|l| l.block == Some(id)))
+        .position(|pg| pg.iter().any(|l| l.block == Some(id) || l.right.as_ref().and_then(|r| r.block) == Some(id)))
         .map(|k| k + 1)
 }
 
