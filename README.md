@@ -1,6 +1,6 @@
 # Blackline
 
-**A screenwriting studio for Linux and Windows.** Free and open source, by
+**A screenwriting studio for Linux, macOS and Windows.** Free and open source, by
 [NativeCompute](https://nativecompute.net).
 
 It behaves like a notes app — open it, type, it saves itself — but every
@@ -8,8 +8,9 @@ paragraph is a typed screenplay element, laid out to standard master-scene
 geometry and exportable as a print-ready PDF, a Final Draft file or Fountain.
 
 Scripts are stored as plain markdown — in `~/.local/share/blackline/scripts`
-on Linux, `%APPDATA%\Blackline\scripts` on Windows — so your work stays
-greppable, diffable, and yours.
+on Linux, `~/Library/Application Support/Blackline/scripts` on a Mac,
+`%APPDATA%\Blackline\scripts` on Windows — so your work stays greppable,
+diffable, and yours.
 
 Blackline is drawn in NativeCompute's design language, the same one as
 [NativeCompute's own website](https://nativecompute.net): void black, chrome
@@ -24,6 +25,17 @@ look, in a dark cast and a light one.
 ![Cards: storylines, the timeline with beat guides, and the scenes as index cards](docs/blackline-cards.png)
 
 ---
+
+## New in 2.2: on the Mac
+
+- **Blackline runs on macOS** 11 Big Sur and newer, as one app for Apple
+  Silicon and Intel. Install it with one line in Terminal (see
+  [Installing](#on-a-mac)).
+- It is a proper Mac app: the Mac's own window frame and full screen, Metal
+  graphics, the system Open panel, *Show in Finder*, `Cmd` and `Option` in
+  every hint, and your scripts in `~/Library/Application Support/Blackline`.
+- **Quitting saves** whatever you typed in the last few seconds, however the
+  app is quit: `Cmd+Q`, the menu, logging out or shutting down.
 
 ## New in 2.1: Blue Pages
 
@@ -77,6 +89,65 @@ new markers are only written into a script once you use the feature.
 
 ## Installing
 
+### On a Mac
+
+macOS 11 Big Sur or newer, on Apple Silicon or Intel. Open **Terminal** (in
+Applications → Utilities), paste this line and press Return:
+
+```bash
+curl -fsSL https://github.com/NativeCompute/blackline/releases/latest/download/install-macos.sh | bash
+```
+
+It downloads the latest release, checks it against its checksum, puts
+**Blackline** in your Applications folder (`~/Applications` if your account
+cannot write to `/Applications`) and opens it. Nothing needs your password.
+
+- **Updating:** run the same line again. If Blackline is open, it waits for
+  you to quit it (`Cmd+Q`) and carries on. Home's update notice has a *Copy
+  update command* button with this line in it.
+- **Your scripts** live in `~/Library/Application Support/Blackline/scripts`.
+  Before every install the whole library is copied to
+  `~/Library/Application Support/Blackline-backup-<date>`; nothing in it is
+  moved or changed.
+- **Uninstalling:** the same line with `--uninstall` on the end of `bash`:
+
+  ```bash
+  curl -fsSL https://github.com/NativeCompute/blackline/releases/latest/download/install-macos.sh | bash -s -- --uninstall
+  ```
+
+  or drag Blackline from Applications to the Bin. Your scripts stay where
+  they are.
+
+**Downloading the .zip instead.** The release also has
+`blackline-<version>-macos-universal.zip`. Unzip it and drag **Blackline** into
+Applications. Blackline is not signed with a paid Apple developer certificate,
+so the first time you open a copy that came through a browser, macOS stops it:
+
+- **macOS 15 Sequoia and later:** open it once and click *Done* when macOS
+  says it could not verify it. Then open **System Settings → Privacy &
+  Security**, scroll down to *“Blackline” was blocked*, click **Open Anyway**
+  and confirm.
+- **macOS 11 Big Sur to 14 Sonoma:** Control-click (or right-click) Blackline
+  in Applications, choose **Open**, then **Open** again.
+
+You do this once. Or skip it with one line in Terminal:
+`xattr -dr com.apple.quarantine /Applications/Blackline.app`. The Terminal
+install above never needs any of this.
+
+**From source on a Mac.** You need Apple's command line tools
+(`xcode-select --install`) and Rust (`curl --proto '=https' --tlsv1.2 -sSf
+https://sh.rustup.rs | sh`). Then:
+
+```bash
+git clone https://github.com/NativeCompute/blackline.git
+cd blackline
+./install.sh
+```
+
+On a Mac, `install.sh` hands over to `install-macos.sh --from-source`, which
+builds `Blackline.app` for your Mac and installs it the same way. If a tool is
+missing it says which and how to get it.
+
 ### From a release
 
 Download the latest build from
@@ -89,7 +160,7 @@ Download the latest build from
 - **Windows** — `blackline-<version>-windows-x86_64.zip`. Unpack it anywhere
   and run `blackline.exe`. Your scripts live in `%APPDATA%\Blackline`.
 
-### From source (Linux)
+### From source on Linux
 
 Written for **Pop!\_OS, Debian and Ubuntu** (22.04 and later), on **KDE
 Plasma** or GNOME.
@@ -143,6 +214,10 @@ and Courier Prime (the page) ship inside the binary.
 Blackline has no desktop title bar. It draws its own: the mark, the name and
 the three window buttons along the top, the whole strip draggable, a
 double-click to maximise, and invisible grips down every edge for resizing.
+
+On a Mac, Blackline uses the Mac's own window frame instead: the red, yellow
+and green buttons sit at the top left over the title strip, and resizing,
+full screen and window tiling are the system's.
 
 The window is void black with the website's faint column guides drawn across
 it. Anything you *work in* — the notes panel, the page, the scene navigator — is a
@@ -241,7 +316,12 @@ and the type decides the indent, the width, and whether it is forced to caps.
 | `Ctrl+,` | Settings |
 | `Esc` | Close whatever is open |
 
-Typing is saved automatically about a second after you stop. The ribbon says
+On a Mac, read `Cmd` for `Ctrl` and `Option` for `Alt`, with one change:
+Find and replace is `Cmd+Option+F`, because `Cmd+H` hides the app on a Mac.
+Every hint in the app names the keys the way your platform does.
+
+Typing is saved automatically about a second after you stop, and again
+when the app quits. The ribbon says
 `unsaved` while there is something to save, and `saved 2m ago` after.
 
 **SmartType** finishes what you are typing, in ghost ink after the caret:
@@ -368,9 +448,9 @@ the window, or `blackline some-file.fountain` — reads Fountain, Final Draft
 and Blackline markdown into a new script. When the file had anything Blackline
 could not keep exactly (scene numbers, deeper sections, page breaks, centred
 text, lyrics, title page fields, Final Draft paragraph types or script notes),
-a window lists each kind with a count and a *Show me* link to where it was. The file picker is Windows' own on
-Windows; on Linux, KDE's dialog (`kdialog`) where there is one, GNOME's
-(`zenity`) otherwise.
+a window lists each kind with a count and a *Show me* link to where it was. The file picker is the system's own
+Open panel on a Mac and on Windows; on Linux, KDE's dialog (`kdialog`) where
+there is one, GNOME's (`zenity`) otherwise.
 
 **Snapshots** (`⋯` → *Take a snapshot* / *Snapshots…*) put a dated copy of the
 script aside. Restoring one asks first, and keeps what was there as a snapshot
@@ -424,7 +504,8 @@ on [GitHub](https://github.com/NativeCompute/blackline/releases). It sends one
 request to GitHub's public API and nothing else — no account, no identifier,
 just the app's version in the request header. When there is a newer version it
 says so and links to the release page; nothing is downloaded or installed by
-itself. The splash card says how the check went, and Home shows a notice with
+itself. On a Mac the notice also offers *Copy update command*, the Terminal
+line from [Installing](#on-a-mac). The splash card says how the check went, and Home shows a notice with
 a *Download* button while a newer version is out; dismiss it and that version
 does not come up again. Turn the check off in Settings → About.
 
@@ -485,11 +566,22 @@ follows the [code of conduct](CODE_OF_CONDUCT.md).
 ## Development
 
 ```bash
-cargo test          # 141 tests: behaviour, files, formats, headless UI
+cargo test          # 150 tests: behaviour, files, formats, headless UI
 cargo build --release
 ./target/release/blackline --emit-icon icon.svg   # the mark, as the app draws it
 ./target/release/blackline --emit-ico packaging/blackline.ico   # the Windows icon
+./target/release/blackline --smoke /tmp/smoke     # the real window, every screen, checked
+packaging/macos/bundle.sh                         # on a Mac: the universal, signed Blackline.app
 ```
+
+`--smoke <folder>` opens the real window with a throwaway library in that
+folder, walks through every screen, screenshots each one and checks it is not
+blank, exports a PDF, imports a file, quits with an unsaved edit and checks it
+was saved. It writes `report.txt` and exits 0 only if all of it held. CI runs
+it on Linux and on four Macs (Apple Silicon and Intel, macOS 15 and 26) with
+Metal and with OpenGL, then installs the released `.zip` on fresh Macs with
+`install-macos.sh`, opens it through macOS, updates it while it is open and
+uninstalls it (`packaging/macos/verify-install.sh`).
 
 The headless UI tests build a real `App`, feed it synthetic clicks, drags,
 pastes and keystrokes through egui with no window, and read back what
