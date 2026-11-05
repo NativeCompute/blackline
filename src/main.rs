@@ -46,6 +46,7 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .map(|r| r.to_ascii_lowercase());
     if let Some(dir) = &smoke {
+        smoke::catch_logs();
         if let Err(e) = smoke::prepare(dir) {
             eprintln!("smoke: {e}");
             std::process::exit(2);

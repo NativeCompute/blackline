@@ -26,6 +26,60 @@ fn note(line: String) {
     }
 }
 
+struct Catch;
+
+static CAUGHT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+impl log::Log for Catch {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= log::Level::Warn
+    }
+
+    fn log(&self, r: &log::Record) {
+        if !self.enabled(r.metadata()) {
+            return;
+        }
+        let line = format!("{} {}: {}", r.level(), r.target(), r.args());
+        let fresh = CAUGHT.lock().map(|mut c| {
+            if c.len() >= 40 || c.contains(&line) {
+                false
+            } else {
+                c.push(line.clone());
+                true
+            }
+        });
+        if fresh.unwrap_or(false) {
+            note(format!("log {line}"));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static CATCH: Catch = Catch;
+
+pub fn catch_logs() {
+    if log::set_logger(&CATCH).is_ok() {
+        log::set_max_level(log::LevelFilter::Warn);
+    }
+}
+
+pub fn describe(image: &egui::ColorImage) -> String {
+    let mut seen: Vec<[u8; 3]> = Vec::new();
+    let (mut lo, mut hi) = (255u8, 0u8);
+    for c in image.pixels.iter().step_by(97) {
+        let rgb = [c.r(), c.g(), c.b()];
+        let l = ((rgb[0] as u32 + rgb[1] as u32 + rgb[2] as u32) / 3) as u8;
+        lo = lo.min(l);
+        hi = hi.max(l);
+        if seen.len() < 64 && !seen.contains(&rgb) {
+            seen.push(rgb);
+        }
+    }
+    let middle = image.pixels.get(image.size[1] / 2 * image.size[0] + image.size[0] / 2).map(|c| [c.r(), c.g(), c.b(), c.a()]).unwrap_or_default();
+    format!("colours {} light {lo}..{hi} middle {middle:?}", if seen.len() >= 64 { "64+".to_string() } else { seen.len().to_string() })
+}
+
 fn absolute(dir: &Path) -> PathBuf {
     if dir.is_absolute() {
         dir.to_path_buf()
@@ -93,6 +147,7 @@ pub struct Smoke {
     frames: u32,
     asked: Option<Instant>,
     done: bool,
+    told: bool,
 }
 
 pub fn blank(image: &egui::ColorImage) -> bool {
@@ -131,7 +186,7 @@ impl Smoke {
             std::process::exit(3);
         });
         note(format!("renderer {renderer}"));
-        Smoke { app, dir, renderer, step: 0, entered: Instant::now(), frames: 0, asked: None, done: false }
+        Smoke { app, dir, renderer, step: 0, entered: Instant::now(), frames: 0, asked: None, done: false, told: false }
     }
 
     fn enter(&mut self, step: Step) {
@@ -194,6 +249,21 @@ impl Smoke {
 
 impl eframe::App for Smoke {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if !self.told {
+            self.told = true;
+            if let Some(gl) = frame.gl() {
+                use eframe::glow::HasContext as _;
+                let (vendor, renderer, version, side) = unsafe {
+                    (
+                        gl.get_parameter_string(eframe::glow::VENDOR),
+                        gl.get_parameter_string(eframe::glow::RENDERER),
+                        gl.get_parameter_string(eframe::glow::VERSION),
+                        gl.get_parameter_i32(eframe::glow::MAX_TEXTURE_SIZE),
+                    )
+                };
+                note(format!("gl {vendor} / {renderer} / {version} / max texture {side}"));
+            }
+        }
         self.app.update(ctx, frame);
         ctx.request_repaint();
         if self.done {
@@ -211,14 +281,19 @@ impl eframe::App for Smoke {
             let path = self.dir.join("shots").join(&name);
             let saved = save_png(&path, &image);
             let empty = blank(&image);
+            let fonts = ctx.fonts(|f| f.font_image_size());
             note(format!(
-                "{} shot {:?} {}x{}{}{}",
+                "{} shot {:?} {}x{}{}{} ({}, font texture {}x{}, {:.2} px per point)",
                 if saved.is_ok() && !empty { "ok" } else { "FAIL" },
                 step,
                 image.size[0],
                 image.size[1],
                 if empty { " looks blank" } else { "" },
-                saved.err().map(|e| format!(" could not save: {e}")).unwrap_or_default()
+                saved.err().map(|e| format!(" could not save: {e}")).unwrap_or_default(),
+                describe(&image),
+                fonts[0],
+                fonts[1],
+                ctx.pixels_per_point()
             ));
             self.asked = None;
             self.step += 1;
