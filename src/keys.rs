@@ -1,6 +1,7 @@
 use eframe::egui::{Key, KeyboardShortcut, Modifiers};
 
-pub use ncf::keys::{chord, keycap, parse, refused, text, DIGITS};
+pub use ncf::keys::{chord, keycap, label, label_for, parse, refused, refused_for, text, DIGITS};
+pub use ncf::Os;
 
 use crate::model::Element;
 
@@ -134,6 +135,12 @@ impl Command {
     }
 
     pub fn defaults(self, web: bool) -> Vec<KeyboardShortcut> {
+        self.defaults_for(if web { Os::Web } else { ncf::OS })
+    }
+
+    pub fn defaults_for(self, os: Os) -> Vec<KeyboardShortcut> {
+        let web = os == Os::Web;
+        let mac = os.is_mac();
         let c = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
         let cmd = Modifiers::COMMAND;
         let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
@@ -145,6 +152,7 @@ impl Command {
             NewAct => vec![c(cmd_shift, Key::Enter)],
             Undo => vec![c(cmd, Key::Z)],
             Redo => vec![c(cmd_shift, Key::Z), c(cmd, Key::Y)],
+            Find if mac => vec![c(cmd, Key::F), c(cmd | Modifiers::ALT, Key::F)],
             Find => vec![c(cmd, Key::F), c(cmd, Key::H)],
             FindScripts => vec![c(cmd_shift, Key::F)],
             QuickExport => vec![c(cmd, Key::E)],
@@ -164,6 +172,8 @@ impl Command {
                 let k = DIGITS[(n as usize).clamp(1, 7) - 1];
                 if web {
                     vec![c(Modifiers::ALT, k), c(cmd, k)]
+                } else if mac {
+                    vec![c(cmd, k)]
                 } else {
                     vec![c(cmd, k), c(Modifiers::ALT, k)]
                 }
@@ -194,3 +204,11 @@ impl ncf::keys::Command for Command {
 }
 
 pub type Keymap = ncf::keys::Keymap<Command>;
+
+pub fn command_key() -> &'static str {
+    ncf::OS.command_key()
+}
+
+pub fn alt_key() -> &'static str {
+    ncf::OS.alt_key()
+}

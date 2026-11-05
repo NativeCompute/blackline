@@ -202,7 +202,7 @@ impl App {
                 let (whole, _) = ui.allocate_exact_size(screen.size(), Sense::click());
                 ui.painter().rect_filled(
                     whole,
-                    egui::Rounding::same(if chrome::maximized(ctx) { 0.0 } else { theme::R_WINDOW }),
+                    egui::Rounding::same(chrome::window_radius(ctx, theme::R_WINDOW)),
                     theme::wash(p.backdrop, 238),
                 );
                 chrome::column_guides(ui.painter(), whole);
@@ -268,6 +268,9 @@ impl App {
 
     pub fn debug_tour(&self) -> Option<(Kind, usize)> {
         self.tour.as_ref().map(|t| (t.kind, t.step))
+    }
+    pub fn debug_skip_tour(&mut self) {
+        self.end_tour();
     }
     pub fn debug_start_tour(&mut self) {
         self.start_tour(Kind::Full);

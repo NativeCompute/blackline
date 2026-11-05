@@ -67,3 +67,49 @@ jobs:
         run: cargo clippy --release --all-targets -- -D warnings
       - name: Tests
         run: cargo test --release
+      - name: Build
+        run: cargo build --release
+      - name: Run the real app with Metal
+        timeout-minutes: 5
+        run: ./target/release/blackline --smoke "$RUNNER_TEMP/smoke-wgpu" --renderer wgpu
+      - name: Run the real app with OpenGL
+        timeout-minutes: 5
+        run: ./target/release/blackline --smoke "$RUNNER_TEMP/smoke-glow" --renderer glow
+      - name: What the app saw
+        if: always()
+        run: cat "$RUNNER_TEMP"/smoke-*/report.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/smoke-*/report.txt
+            ${{ runner.temp }}/smoke-*/shots/
+
+  linux-smoke:
+    name: Linux — the real app under a virtual display
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install a virtual display
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgl1-mesa-dri libxkbcommon-x11-0
+      - name: Build
+        run: cargo build --release
+      - name: Run the real app
+        timeout-minutes: 5
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          WINIT_UNIX_BACKEND: x11
+        run: xvfb-run -a -s "-screen 0 1400x1000x24" ./target/release/blackline --smoke "$RUNNER_TEMP/smoke"
+      - name: What the app saw
+        if: always()
+        run: cat "$RUNNER_TEMP"/smoke/report.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-linux
+          path: |
+            ${{ runner.temp }}/smoke/report.txt
+            ${{ runner.temp }}/smoke/shots/

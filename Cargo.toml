@@ -10,7 +10,7 @@ homepage = "https://nativecompute.net"
 repository = "https://github.com/NativeCompute/blackline"
 
 [dependencies]
-ncf = { git = "https://github.com/NativeCompute/ncf", rev = "cb86da5" }
+ncf = { git = "https://github.com/NativeCompute/ncf", rev = "de3762f" }
 eframe = { version = "0.29", default-features = false, features = [
     "glow",
     "default_fonts",
@@ -27,14 +27,19 @@ serde_json = "1"
 eframe = { version = "0.29", default-features = false, features = ["wgpu"] }
 wgpu = { version = "22.1", default-features = false, features = ["dx12"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+eframe = { version = "0.29", default-features = false, features = ["wgpu"] }
+wgpu = { version = "22.1", default-features = false, features = ["metal"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.10"
+png = "0.18"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "wasmbind"] }
 
 [build-dependencies]
-ncf-build = { git = "https://github.com/NativeCompute/ncf", rev = "cb86da5" }
+ncf-build = { git = "https://github.com/NativeCompute/ncf", rev = "de3762f" }
 
 [profile.release]
 opt-level = 3

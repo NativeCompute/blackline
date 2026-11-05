@@ -39,7 +39,7 @@ impl App {
                 let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
                 ui.painter().rect_filled(
                     rect,
-                    egui::Rounding::same(if chrome::maximized(ctx) { 0.0 } else { theme::R_WINDOW }),
+                    egui::Rounding::same(chrome::window_radius(ctx, theme::R_WINDOW)),
                     Color32::from_black_alpha((120.0 * veil) as u8),
                 );
                 if resp.clicked() && self.frame_no > self.popover_frame + 1 {

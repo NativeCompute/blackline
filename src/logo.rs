@@ -15,3 +15,11 @@ pub fn rgba(size: u32) -> Vec<u8> {
 pub fn ico() -> Vec<u8> {
     crate::MARK.ico()
 }
+
+pub fn icns() -> Vec<u8> {
+    crate::MARK.icns()
+}
+
+pub fn info_plist() -> String {
+    ncf::bundle::info_plist(&crate::INFO, "blackline", "Blackline")
+}
