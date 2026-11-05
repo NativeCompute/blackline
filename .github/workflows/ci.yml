@@ -33,6 +33,8 @@ jobs:
         run: cargo test --release
       - name: The library builds for the browser
         run: cargo build --release --lib --target wasm32-unknown-unknown
+      - name: The install scripts pass shellcheck
+        run: shellcheck -S warning install.sh install-macos.sh packaging/macos/*.sh
 
   windows:
     name: Windows — build and clippy
@@ -113,3 +115,61 @@ jobs:
           path: |
             ${{ runner.temp }}/smoke/report.txt
             ${{ runner.temp }}/smoke/shots/
+
+  macos-app:
+    name: macOS — the universal app, packed as released
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build, sign and zip Blackline.app
+        run: packaging/macos/bundle.sh --out dist
+      - name: Stage the release files
+        run: cp install-macos.sh dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: |
+            dist/blackline-macos.zip
+            dist/blackline-macos.zip.sha256
+            dist/install-macos.sh
+      - name: A contributor's ./install.sh builds and installs from source
+        env:
+          BLACKLINE_APP_DIR: ${{ runner.temp }}/from-source
+          BLACKLINE_NO_OPEN: "1"
+        run: |
+          /bin/bash ./install.sh
+          "$BLACKLINE_APP_DIR/Blackline.app/Contents/MacOS/blackline" --version
+          codesign --verify --deep --strict "$BLACKLINE_APP_DIR/Blackline.app"
+
+  macos-install:
+    name: macOS ${{ matrix.os }} — install, open, update, uninstall
+    needs: macos-app
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26, macos-15-intel, macos-26-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-app
+          path: dist
+      - name: Install it the way a user would and run it through macOS
+        timeout-minutes: 15
+        run: /bin/bash packaging/macos/verify-install.sh dist
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: install-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/blackline-verify/*/report.txt
+            ${{ runner.temp }}/blackline-verify/*/shots/
+            ${{ runner.temp }}/blackline-verify/*.log
+            ${{ runner.temp }}/blackline-verify/*.err
