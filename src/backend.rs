@@ -411,9 +411,13 @@ mod local {
 
         fn start_import(&mut self) {
             let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
+            if cfg!(target_os = "macos") {
                 let _ = tx.send(storage::pick_file_to_import());
-            });
+            } else {
+                std::thread::spawn(move || {
+                    let _ = tx.send(storage::pick_file_to_import());
+                });
+            }
             self.importing = Some(rx);
         }
 

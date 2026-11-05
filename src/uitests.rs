@@ -1176,3 +1176,17 @@ fn whats_new_shows_once_takes_the_keys_and_can_be_replayed() {
     }
     assert_eq!(h.app.debug_tour(), None, "seven steps, then back to writing");
 }
+
+#[test]
+fn quitting_saves_what_has_not_been_saved_yet() {
+    let mut h = Harness::with(1320.0, 900.0, "autosave_ms = 10000\n");
+    h.load(three_scenes());
+    let id = h.app.doc().blocks[2].id;
+    h.focus(id);
+    h.type_text(" Typed just before quitting.");
+    assert!(h.app.is_dirty());
+    assert!(!h.saved_text().contains("Typed just before quitting."));
+    eframe::App::on_exit(&mut h.app, None);
+    assert!(!h.app.is_dirty());
+    assert!(h.saved_text().contains("Typed just before quitting."), "{}", h.saved_text());
+}

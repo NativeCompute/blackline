@@ -32,6 +32,8 @@ mod imported;
 pub mod onboarding;
 mod voices;
 
+const FULL_SIZE: Vec2 = Vec2::new(1320.0, 900.0);
+const MIN_SIZE: Vec2 = Vec2::new(880.0, 580.0);
 const SNAPSHOT_IDLE: Duration = Duration::from_millis(700);
 
 const TEAM_TAB: usize = 7;
@@ -214,6 +216,7 @@ pub struct App {
     page_key: String,
     page_born: Instant,
     splash: Option<Splash>,
+    settled: bool,
     pub arrivals: Vec<PathBuf>,
 }
 
@@ -345,6 +348,7 @@ impl App {
             page_key: String::new(),
             page_born: Instant::now(),
             splash,
+            settled: false,
             arrivals: Vec::new(),
         };
 
@@ -924,6 +928,12 @@ impl App {
         pal().backdrop
     }
 
+    pub fn save_before_quit(&mut self) {
+        if self.dirty {
+            self.save(false);
+        }
+    }
+
     fn save_settings(&mut self) {
         if let Err(e) = self.store.write_settings(&self.settings) {
             self.deck.say("Could not save settings", &e, Tone::Danger);
@@ -945,7 +955,8 @@ impl App {
                     self.mark_changed();
                     self.snapshot_due = false;
                     self.baseline = self.doc.clone();
-                    self.deck.say("Scene deleted", &format!("{heading} · Ctrl+Z brings it back"), Tone::Warn);
+                    let undo = self.keys_for(keys::Command::Undo);
+                    self.deck.say("Scene deleted", &format!("{heading} · {undo} brings it back"), Tone::Warn);
                 }
             }
             Ask::RenameScript => {
@@ -982,8 +993,9 @@ impl App {
         self.deck.ask(
             "Delete this scene?",
             &format!(
-                "“{}” and everything in it. Ctrl+Z brings it back.",
-                if heading.trim().is_empty() { "Untitled scene" } else { heading.trim() }
+                "“{}” and everything in it. {} brings it back.",
+                if heading.trim().is_empty() { "Untitled scene" } else { heading.trim() },
+                self.keys_for(keys::Command::Undo)
             ),
             "Delete",
             Tone::Danger,
@@ -1544,7 +1556,7 @@ impl App {
                     .color(p.text_faint),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui::icon_button(ui, Icon::Close, "Hide · Ctrl+I", 20.0) {
+                if ui::icon_button(ui, Icon::Close, &format!("Hide · {}", self.keys_for(keys::Command::ToggleDetails)), 20.0) {
                     self.settings.show_details = false;
                     self.save_settings();
                 }
@@ -1652,7 +1664,7 @@ impl App {
 
         if scenes.is_empty() {
             ui.label(
-                egui::RichText::new("No scene headings yet. Ctrl+1 turns a line into one.")
+                egui::RichText::new(format!("No scene headings yet. {} turns a line into one.", self.keys_for(keys::Command::Element(1))))
                     .font(theme::font(theme::T_CAP))
                     .color(p.text_faint),
             );
@@ -1865,7 +1877,7 @@ impl App {
 
         if self.layout.cast.is_empty() {
             ui.label(
-                egui::RichText::new("Nobody speaks yet. A character cue is Ctrl+3.")
+                egui::RichText::new(format!("Nobody speaks yet. A character cue is {}.", self.keys_for(keys::Command::Element(3))))
                     .font(theme::font(theme::T_CAP))
                     .color(p.text_faint),
             );
@@ -2231,7 +2243,8 @@ impl App {
                     self.mark_changed();
                     self.snapshot_due = false;
                     self.baseline = self.doc.clone();
-                    self.deck.ok("Scene moved", "Ctrl+Z puts it back");
+                    let undo = self.keys_for(keys::Command::Undo);
+                    self.deck.ok("Scene moved", &format!("{undo} puts it back"));
                 }
             }
             Some(cards::Act::Tint(id, t)) => {
@@ -2426,9 +2439,10 @@ impl App {
                 self.snapshot_due = false;
                 self.baseline = self.doc.clone();
                 self.ed.fresh = true;
+                let undo = self.keys_for(keys::Command::Undo);
                 self.deck.ok(
                     &format!("Replaced {n}"),
-                    "Ctrl+Z puts them back",
+                    &format!("{undo} puts them back"),
                 );
             } else {
                 self.undo.pop();
@@ -2752,7 +2766,7 @@ impl App {
                 let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
                 ui.painter().rect_filled(
                     rect,
-                    egui::Rounding::same(if chrome::maximized(ctx) { 0.0 } else { theme::R_WINDOW }),
+                    egui::Rounding::same(chrome::window_radius(ctx, theme::R_WINDOW)),
                     Color32::from_black_alpha((120.0 * veil) as u8),
                 );
                 if resp.clicked() && self.frame_no > self.popover_frame + 1 {
@@ -3046,7 +3060,7 @@ impl App {
                 let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
                 ui.painter().rect_filled(
                     rect,
-                    egui::Rounding::same(if chrome::maximized(ctx) { 0.0 } else { theme::R_WINDOW }),
+                    egui::Rounding::same(chrome::window_radius(ctx, theme::R_WINDOW)),
                     Color32::from_black_alpha((120.0 * veil) as u8),
                 );
                 if resp.clicked() && self.frame_no > self.popover_frame + 1 {
@@ -3225,7 +3239,7 @@ impl App {
                         }
             1 => {
             ui.label(
-                egui::RichText::new(format!("Page text · {:.0} pt · Ctrl+plus / minus", self.settings.page_px))
+                egui::RichText::new(format!("Page text · {:.0} pt · {}+plus / minus", self.settings.page_px, keys::command_key()))
                     .font(theme::font_med(theme::T_SM))
                     .color(p.text),
             );
@@ -3302,12 +3316,13 @@ impl App {
                         }
             3 => {
             ui::section(ui, "Panels");
-            for (label, hint, key) in [
-                ("Details", "Title page and figures · Ctrl+I", 0),
-                ("Scenes", "The navigator · Ctrl+Shift+I", 1),
-                ("Cast", "Who speaks, and how much", 2),
-                ("Notes and changes", "Beside the page · Ctrl+B", 3),
-            ] {
+            let panel_hints = [
+                ("Details", format!("Title page and figures · {}", self.keys_for(keys::Command::ToggleDetails)), 0),
+                ("Scenes", format!("The navigator · {}", self.keys_for(keys::Command::ToggleScenes)), 1),
+                ("Cast", "Who speaks, and how much".to_string(), 2),
+                ("Notes and changes", format!("Beside the page · {}", self.keys_for(keys::Command::ToggleLibrary)), 3),
+            ];
+            for (label, hint, key) in panel_hints {
                 let slot = match key {
                     0 => &mut self.settings.show_details,
                     1 => &mut self.settings.show_scenes,
@@ -3315,7 +3330,7 @@ impl App {
                     _ => &mut self.settings.show_library,
                 };
                 let mut v = *slot;
-                if ui::toggle_row(ui, label, hint, &mut v) {
+                if ui::toggle_row(ui, label, &hint, &mut v) {
                     *slot = v;
                 }
             }
@@ -3900,18 +3915,24 @@ impl App {
             self.answer(answer);
         }
 
+        let own_window = self.splash.as_ref().map(|s| !s.is_inline()).unwrap_or(false);
+        if !own_window && !self.settled {
+            self.settled = crate::splash::settle(ctx, FULL_SIZE);
+        }
         if let Some(splash) = self.splash.as_mut() {
             splash.set_status(self.update.clone());
             if splash.show(ctx) {
-                if self.frame_no < 3 {
+                if own_window && self.frame_no < 3 {
                     crate::splash::centre(ctx, crate::splash::CARD);
                 }
             } else {
                 self.splash = None;
-                let full = Vec2::new(1320.0, 900.0);
-                ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(880.0, 580.0)));
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(full));
-                crate::splash::centre(ctx, full);
+                if own_window {
+                    let full = chrome::fit(FULL_SIZE, ctx.input(|i| i.viewport().monitor_size), ncf::OS);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(MIN_SIZE));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(full));
+                    crate::splash::centre(ctx, full);
+                }
             }
         }
 
@@ -3932,6 +3953,18 @@ impl App {
 
 #[allow(dead_code)]
 impl App {
+    pub fn debug_run(&mut self, cmd: keys::Command) {
+        self.run(cmd);
+    }
+    pub fn debug_append(&mut self, text: &str) {
+        if let Some(b) = self.doc.blocks.iter_mut().rev().find(|b| b.element == Element::Action) {
+            b.text.push_str(text);
+            self.mark_changed();
+        }
+    }
+    pub fn is_dirty_now(&self) -> bool {
+        self.dirty
+    }
     pub fn mode(&self) -> Mode {
         self.mode
     }
@@ -4188,7 +4221,11 @@ impl eframe::App for App {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
+        chrome::clear_color(ncf::OS, self.window_ground())
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.save_before_quit();
     }
 }
 

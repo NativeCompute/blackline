@@ -134,9 +134,9 @@ impl App {
             egui::TextEdit::singleline(&mut self.home_search)
                 .id(egui::Id::new("ns-home-search"))
                 .hint_text(if team.is_some() {
-                    "Search the team's scripts  ·  Ctrl+F"
+                    format!("Search the team's scripts  ·  {}+F", crate::keys::command_key())
                 } else {
-                    "Search titles and every line  ·  Ctrl+F"
+                    format!("Search titles and every line  ·  {}+F", crate::keys::command_key())
                 })
                 .desired_width(w.min(380.0))
                 .margin(egui::Margin::symmetric(12.0, 8.0)),
@@ -375,6 +375,15 @@ impl App {
         buttons.add_space(4.0);
         if ui::button(&mut buttons, "Download", Some(Icon::External), true) {
             self.store.open_url(&crate::update::releases_latest(crate::INFO.repo));
+        }
+        if ncf::OS.is_mac() {
+            buttons.add_space(4.0);
+            let copy = ui::button_response(&mut buttons, "Copy update command", Some(Icon::Copy), false, None)
+                .on_hover_text("Paste it into Terminal: it installs the new version over this one and keeps your scripts.");
+            if copy.clicked() {
+                buttons.ctx().copy_text(crate::MAC_INSTALL.to_string());
+                self.deck.ok("Copied", "Paste it into Terminal and press Return.");
+            }
         }
         self.update_rect = rect;
         ui.add_space(14.0);
