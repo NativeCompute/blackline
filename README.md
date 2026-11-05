@@ -109,7 +109,7 @@ cannot write to `/Applications`) and opens it. Nothing needs your password.
   Before every install the whole library is copied to
   `~/Library/Application Support/Blackline-backup-<date>`; nothing in it is
   moved or changed.
-- **Uninstalling:** the same line with `--uninstall` on the end of `bash`:
+- **Uninstalling:** the same line, ending in `bash -s -- --uninstall`:
 
   ```bash
   curl -fsSL https://github.com/NativeCompute/blackline/releases/latest/download/install-macos.sh | bash -s -- --uninstall
@@ -148,7 +148,7 @@ On a Mac, `install.sh` hands over to `install-macos.sh --from-source`, which
 builds `Blackline.app` for your Mac and installs it the same way. If a tool is
 missing it says which and how to get it.
 
-### From a release
+### Linux and Windows, from a release
 
 Download the latest build from
 [Releases](https://github.com/NativeCompute/blackline/releases):
