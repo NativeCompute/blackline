@@ -165,6 +165,57 @@ pub fn blank(image: &egui::ColorImage) -> bool {
     seen.len() < 6 || hi.saturating_sub(lo) < 40
 }
 
+pub fn read_back_empty(image: &egui::ColorImage) -> bool {
+    !image.pixels.is_empty() && image.pixels.iter().all(|c| *c == egui::Color32::TRANSPARENT)
+}
+
+pub fn read_bmp(bytes: &[u8]) -> Result<egui::ColorImage, String> {
+    let int = |at: usize| -> Result<i64, String> {
+        bytes.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as i64).ok_or_else(|| "the BMP is cut short".to_string())
+    };
+    if bytes.get(0..2) != Some(b"BM") {
+        return Err("not a BMP".into());
+    }
+    let offset = int(10)? as usize;
+    let width = int(18)?;
+    let height = int(22)?;
+    let bits = bytes.get(28..30).map(|b| u16::from_le_bytes([b[0], b[1]])).unwrap_or(0) as usize;
+    if width <= 0 || height == 0 || !(bits == 24 || bits == 32) {
+        return Err(format!("unexpected BMP: {width}x{height}, {bits} bits"));
+    }
+    let (w, h) = (width as usize, height.unsigned_abs() as usize);
+    let row = (w * bits / 8).div_ceil(4) * 4;
+    let mut pixels = Vec::with_capacity(w * h);
+    for y in 0..h {
+        let start = offset + y * row;
+        let line = bytes.get(start..start + w * bits / 8).ok_or_else(|| "the BMP is cut short".to_string())?;
+        for px in line.chunks_exact(bits / 8) {
+            pixels.push(egui::Color32::from_rgb(px[2], px[1], px[0]));
+        }
+    }
+    Ok(egui::ColorImage { size: [w, h], pixels })
+}
+
+#[cfg(target_os = "macos")]
+fn screen_shows(ctx: &egui::Context, path: &Path) -> Result<egui::ColorImage, String> {
+    let rect = ctx.input(|i| i.viewport().inner_rect).ok_or("the window has no position")?;
+    let area = format!("-R{:.0},{:.0},{:.0},{:.0}", rect.min.x, rect.min.y, rect.width(), rect.height());
+    let status = std::process::Command::new("/usr/sbin/screencapture")
+        .args(["-x", "-t", "bmp", &area])
+        .arg(path)
+        .status()
+        .map_err(|e| format!("screencapture: {e}"))?;
+    if !status.success() {
+        return Err(format!("screencapture exited with {status}"));
+    }
+    read_bmp(&std::fs::read(path).map_err(|e| e.to_string())?)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn screen_shows(_ctx: &egui::Context, _path: &Path) -> Result<egui::ColorImage, String> {
+    Err("only checked this way on a Mac".into())
+}
+
 fn save_png(path: &Path, image: &egui::ColorImage) -> Result<(), String> {
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), image.size[0] as u32, image.size[1] as u32);
@@ -280,17 +331,27 @@ impl eframe::App for Smoke {
             let name = format!("{:02}-{:?}.png", self.step + 1, step).to_lowercase();
             let path = self.dir.join("shots").join(&name);
             let saved = save_png(&path, &image);
-            let empty = blank(&image);
+            let mut empty = blank(&image);
             let fonts = ctx.fonts(|f| f.font_image_size());
+            let mut how = describe(&image);
+            if empty && read_back_empty(&image) {
+                let screen = self.dir.join("shots").join(name.replace(".png", "-screen.bmp"));
+                match screen_shows(ctx, &screen) {
+                    Ok(seen) => {
+                        empty = blank(&seen);
+                        how = format!("the {} renderer read back an empty frame; macOS's own screenshot of the window: {}", self.renderer, describe(&seen));
+                    }
+                    Err(e) => how = format!("the {} renderer read back an empty frame and the screen could not be checked: {e}", self.renderer),
+                }
+            }
             note(format!(
-                "{} shot {:?} {}x{}{}{} ({}, font texture {}x{}, {:.2} px per point)",
+                "{} shot {:?} {}x{}{}{} ({how}, font texture {}x{}, {:.2} px per point)",
                 if saved.is_ok() && !empty { "ok" } else { "FAIL" },
                 step,
                 image.size[0],
                 image.size[1],
                 if empty { " looks blank" } else { "" },
                 saved.err().map(|e| format!(" could not save: {e}")).unwrap_or_default(),
-                describe(&image),
                 fonts[0],
                 fonts[1],
                 ctx.pixels_per_point()
@@ -394,6 +455,57 @@ mod tests {
             *p = egui::Color32::from_rgb(v, 255 - v, (v / 2).wrapping_add(40));
         }
         assert!(!blank(&busy));
+    }
+
+    #[test]
+    fn only_a_frame_with_nothing_in_it_counts_as_not_read_back() {
+        assert!(read_back_empty(&egui::ColorImage::new([8, 8], egui::Color32::TRANSPARENT)));
+        assert!(!read_back_empty(&egui::ColorImage::new([8, 8], egui::Color32::BLACK)));
+        assert!(!read_back_empty(&egui::ColorImage::new([8, 8], egui::Color32::from_rgb(7, 8, 13))));
+        assert!(!read_back_empty(&egui::ColorImage { size: [0, 0], pixels: Vec::new() }));
+    }
+
+    fn bmp(w: usize, h: i32, bits: usize, px: impl Fn(usize, usize) -> [u8; 3]) -> Vec<u8> {
+        let row = (w * bits / 8).div_ceil(4) * 4;
+        let rows = h.unsigned_abs() as usize;
+        let mut out = b"BM".to_vec();
+        out.extend(((54 + row * rows) as u32).to_le_bytes());
+        out.extend([0u8; 4]);
+        out.extend(54u32.to_le_bytes());
+        out.extend(40u32.to_le_bytes());
+        out.extend((w as i32).to_le_bytes());
+        out.extend(h.to_le_bytes());
+        out.extend(1u16.to_le_bytes());
+        out.extend((bits as u16).to_le_bytes());
+        out.extend([0u8; 24]);
+        for y in 0..rows {
+            let mut line = Vec::new();
+            for x in 0..w {
+                let [r, g, b] = px(x, y);
+                line.extend([b, g, r]);
+                if bits == 32 {
+                    line.push(255);
+                }
+            }
+            line.resize(row, 0);
+            out.extend(line);
+        }
+        out
+    }
+
+    #[test]
+    fn a_screen_capture_bmp_reads_back_with_its_colours() {
+        for (bits, h) in [(24, 3), (32, -3), (24, -3), (32, 3)] {
+            let bytes = bmp(5, h, bits, |x, y| [(x * 40) as u8, (y * 60) as u8, 200]);
+            let image = read_bmp(&bytes).unwrap();
+            assert_eq!(image.size, [5, 3], "{bits} bits, height {h}");
+            assert_eq!(image.pixels[1], egui::Color32::from_rgb(40, 0, 200), "{bits} bits, height {h}");
+            assert_eq!(image.pixels[5 + 2], egui::Color32::from_rgb(80, 60, 200), "{bits} bits, height {h}");
+        }
+        assert!(read_bmp(b"PNG").is_err());
+        assert!(read_bmp(&bmp(5, 3, 24, |_, _| [1, 2, 3])[..60]).is_err());
+        let flat = read_bmp(&bmp(64, 32, 32, |_, _| [7, 8, 13])).unwrap();
+        assert!(blank(&flat));
     }
 
     #[test]
