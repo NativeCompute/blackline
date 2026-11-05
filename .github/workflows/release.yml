@@ -5,6 +5,7 @@ on:
     tags: ["v*"]
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -123,6 +124,7 @@ jobs:
   publish:
     name: GitHub Release
     needs: [linux, windows, macos, macos-intel, macos-verify]
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
