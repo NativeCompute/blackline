@@ -151,6 +151,7 @@ pub struct Meta {
     pub revision_date: String,
     pub revision_base: String,
     pub locked: bool,
+    pub youtrack: String,
 }
 
 impl Meta {

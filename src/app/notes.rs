@@ -234,7 +234,7 @@ impl App {
 
                         const TRACKER: f32 = 34.0;
                         const FOOT: f32 = 24.0;
-                        let tracker = !self.settings.youtrack_url.trim().is_empty();
+                        let tracker = self.script_youtrack().is_some();
                         let gaps = ui.spacing().item_spacing.y * if tracker { 2.0 } else { 1.0 };
                         let list_h = (ui.available_height() - if tracker { TRACKER } else { 0.0 } - FOOT - gaps).max(60.0);
                         let (list, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), list_h), egui::Sense::hover());
@@ -246,12 +246,9 @@ impl App {
                             self.changes_list(&mut list_ui);
                         }
 
-                        if tracker && super::youtrack_button(ui, &self.settings.youtrack_url) {
-                            let url = self.settings.youtrack_url.trim().to_string();
-                            if url.starts_with("http://") || url.starts_with("https://") {
-                                self.store.open_url(&url);
-                            } else {
-                                self.deck.warn("That is not a web address", "Set the YouTrack link in Settings.");
+                        if let Some(url) = self.script_youtrack() {
+                            if super::youtrack_button(ui, &url) {
+                                self.open_youtrack();
                             }
                         }
                         let (foot, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), FOOT), egui::Sense::hover());

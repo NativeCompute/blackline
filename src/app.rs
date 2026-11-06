@@ -1601,6 +1601,47 @@ impl App {
             });
     }
 
+    fn script_youtrack(&self) -> Option<String> {
+        crate::youtrack::target(&self.doc.meta.youtrack, &self.settings.youtrack_url)
+    }
+
+    fn open_youtrack(&mut self) {
+        match self.script_youtrack() {
+            Some(url) => self.store.open_url(&url),
+            None => self.deck.warn("No YouTrack link", "Add one in Details, or set your workspace in Settings → YouTrack."),
+        }
+    }
+
+    fn details_youtrack(&mut self, ui: &mut egui::Ui) {
+        let p = pal();
+        ui::section(ui, "YouTrack");
+        ui.label(
+            egui::RichText::new("Issue or project for this script")
+                .font(theme::font_med(theme::T_CAP))
+                .color(p.text_faint),
+        );
+        let changed = ui
+            .add_enabled(
+                self.access.can_edit(),
+                egui::TextEdit::singleline(&mut self.doc.meta.youtrack)
+                    .id(egui::Id::new("ns-script-youtrack"))
+                    .desired_width(f32::INFINITY)
+                    .margin(egui::Margin::symmetric(10.0, 6.0))
+                    .hint_text("BL-42, BL or a full link"),
+            )
+            .changed();
+        if changed {
+            self.mark_changed();
+        }
+        if let Some(why) = crate::youtrack::explain(&self.doc.meta.youtrack, &self.settings.youtrack_url) {
+            ui.label(egui::RichText::new(why).font(theme::font(theme::T_CAP)).color(p.text_faint));
+        } else if let Some(url) = crate::youtrack::script_link(&self.doc.meta.youtrack, &self.settings.youtrack_url) {
+            if ui::link(ui, &crate::youtrack::display(&url)) {
+                self.store.open_url(&url);
+            }
+        }
+    }
+
     fn details_panel(&mut self, ui: &mut egui::Ui) {
         let p = pal();
         let mut edited = false;
@@ -1666,6 +1707,10 @@ impl App {
         if edited {
             self.mark_changed();
         }
+
+        ui.add_space(6.0);
+        ui::separator(ui);
+        self.details_youtrack(ui);
 
         ui.add_space(6.0);
         ui::separator(ui);
@@ -2635,6 +2680,12 @@ impl App {
                         self.find.focus = true;
                         self.popover = None;
                     }
+                    if crate::youtrack::script_link(&self.doc.meta.youtrack, &self.settings.youtrack_url).is_some()
+                        && ui::menu_item(ui, &mut rects, "View on YouTrack", Icon::External, false)
+                    {
+                        self.open_youtrack();
+                        self.popover = None;
+                    }
                     if write && ui::menu_item(ui, &mut rects, "Rename script", Icon::Pencil, false) && self.guard_edit() {
                         let seed = self.doc.meta.title.clone();
                         self.deck.prompt(
@@ -3486,7 +3537,7 @@ impl App {
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new(
-                    "YouTrack is JetBrains' issue tracker and project management tool. Paste your workspace's link and a View on YouTrack button appears at the foot of the library.",
+                    "YouTrack is JetBrains' issue tracker and project management tool. Paste your workspace's link and a View on YouTrack button appears at the foot of Home and of the notes panel. Each script can also point at its own issue or project in Details; with the workspace set, an ID like BL-42 is enough.",
                 )
                 .font(theme::font(theme::T_CAP))
                 .color(p.text_dim),

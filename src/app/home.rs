@@ -588,11 +588,9 @@ impl App {
         ui.vertical_centered(|ui| {
             ui.set_width(260.0);
             if !self.settings.youtrack_url.trim().is_empty() && youtrack_button(ui, &self.settings.youtrack_url) {
-                let url = self.settings.youtrack_url.trim().to_string();
-                if url.starts_with("http://") || url.starts_with("https://") {
-                    self.store.open_url(&url);
-                } else {
-                    self.deck.warn("That is not a web address", "Set the YouTrack link in Settings.");
+                match crate::youtrack::target("", &self.settings.youtrack_url) {
+                    Some(url) => self.store.open_url(&url),
+                    None => self.deck.warn("That is not a web address", "Set the YouTrack link in Settings."),
                 }
             }
             if ui::quiet_button(ui, "Take the tour", Some(Icon::Sparkle)) {
