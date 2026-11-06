@@ -26,6 +26,18 @@ look, in a dark cast and a light one.
 
 ---
 
+## New in 2.3: a cleaner launch
+
+- **Updates are asked about up front.** When a new version is out, the
+  splash card turns into a short question as Blackline opens: **Update
+  now**, **Not now** or **Skip this version**. With the splash turned off,
+  the same card appears over the window. See [Updates](#updates).
+- **A leaner launch.** The splash and the updater window are shorter, with
+  the empty space gone.
+- **Notifications that look like Blackline.** Saved, renamed, warnings and
+  errors are square readouts with a coloured edge and a label, and
+  confirmations use the normal buttons.
+
 ## New in 2.2: on the Mac
 
 - **Blackline runs on macOS** 11 Big Sur and newer, as one app for Apple
