@@ -19,6 +19,7 @@ impl App {
     // title bar here---
 
     pub(super) fn title_extras(&mut self, ui: &mut egui::Ui) {
+        self.debug.tag(ui);
         let Some((me, role, team_name)) = self
             .store
             .team()

@@ -1207,3 +1207,147 @@ fn quitting_saves_what_has_not_been_saved_yet() {
     assert!(!h.app.is_dirty());
     assert!(h.saved_text().contains("Typed just before quitting."), "{}", h.saved_text());
 }
+
+// debug mode here---
+
+impl Harness {
+    fn click_held(&mut self, at: Pos2, modifiers: Modifiers) {
+        let held = |events: Vec<Event>| RawInput { modifiers, events, ..Default::default() };
+        for events in [
+            vec![Event::PointerMoved(at)],
+            vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers }],
+            vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: false, modifiers }],
+        ] {
+            let mut input = held(events);
+            input.screen_rect = Some(Rect::from_min_size(pos2(0.0, 0.0), self.size));
+            let ctx = self.ctx.clone();
+            let app = &mut self.app;
+            let _ = ctx.run(input, |c| app.frame(c));
+        }
+        self.frame();
+    }
+
+    fn knock(&mut self, times: usize, modifiers: Modifiers) {
+        self.app.debug_open_settings(6);
+        self.frames(3);
+        let at = self.app.debug_version_rect().center();
+        assert!(self.app.debug_version_rect().is_positive(), "the version line should be on screen");
+        for _ in 0..times {
+            self.click_held(at, modifiers);
+        }
+    }
+
+    fn debug_on(&mut self) {
+        self.knock(5, Modifiers::COMMAND | Modifiers::SHIFT);
+        assert!(self.app.debug_mode().on);
+        self.app.debug_close_popover();
+        self.frames(2);
+    }
+}
+
+#[test]
+fn debug_mode_is_off_and_unwritten_by_default() {
+    let h = Harness::new();
+    assert!(!h.app.debug_mode().on);
+    assert!(!storage::read_settings().serialize().contains("debug"), "the settings file is unchanged while it is off");
+}
+
+#[test]
+fn the_hidden_gesture_turns_debug_mode_on_and_off() {
+    let mut h = Harness::new();
+    h.knock(5, Modifiers::NONE);
+    assert!(!h.app.debug_mode().on, "plain clicks do nothing");
+    h.knock(5, Modifiers::SHIFT);
+    assert!(!h.app.debug_mode().on, "one key is not enough");
+    h.knock(4, Modifiers::COMMAND | Modifiers::SHIFT);
+    assert!(!h.app.debug_mode().on, "four is not enough");
+    h.knock(1, Modifiers::COMMAND | Modifiers::SHIFT);
+    assert!(h.app.debug_mode().on, "the fifth click switches it on");
+    assert!(h.app.debug_mode().open);
+    h.idle();
+    assert!(storage::read_settings().debug, "it stays on next launch");
+
+    h.knock(5, Modifiers::COMMAND | Modifiers::SHIFT);
+    assert!(!h.app.debug_mode().on);
+    h.idle();
+    assert!(!storage::read_settings().serialize().contains("debug"));
+}
+
+#[test]
+fn debug_mode_draws_its_panel_and_every_display_button_runs() {
+    use ncf::debug::Request;
+    let mut h = Harness::new();
+    h.debug_on();
+    h.frames(2);
+    for request in [
+        Request::FakeUpdate,
+        Request::Notice(crate::alerts::Tone::Warn),
+        Request::TextScale(0.1),
+        Request::Light(true),
+        Request::Animations(true),
+        Request::Inspector(true),
+        Request::Inspector(false),
+        Request::WindowSize(ncf::debug::SMALL),
+    ] {
+        let ctx = h.ctx.clone();
+        h.app.apply_debug(&ctx, &request);
+        h.frames(2);
+    }
+    assert!(matches!(h.app.update_status(), crate::update::Status::Newer(_)), "the pretend release is offered");
+    assert!((h.app.settings().font_scale - 1.1).abs() < 1e-3);
+    assert!(h.app.settings().light_mode);
+
+    let ctx = h.ctx.clone();
+    h.app.apply_debug(&ctx, &Request::Confirm);
+    h.frames(2);
+    h.confirm();
+
+    h.app.apply_debug(&ctx, &Request::Splash(crate::update::Status::Failed));
+    h.frames(2);
+    assert!(h.app.debug_splash_replaying(), "the splash comes back with the chosen status");
+
+    h.app.apply_debug(&ctx, &Request::Off);
+    h.frames(2);
+    assert!(!h.app.debug_mode().on);
+    h.idle();
+    assert!(!storage::read_settings().debug);
+}
+
+#[test]
+fn debug_mode_can_fail_one_save_and_the_next_one_recovers() {
+    use crate::app::debug::Tool;
+    let mut h = Harness::with(1320.0, 900.0, "autosave_ms = 10000\n");
+    h.load(three_scenes());
+    h.debug_on();
+    let id = h.app.doc().blocks[2].id;
+    h.focus(id);
+    h.type_text(" First try.");
+    h.app.use_tool(Tool::FailSave);
+    h.app.debug_save();
+    h.frames(2);
+    assert!(h.app.is_dirty(), "the failed save leaves the script marked unsaved");
+    assert!(!h.saved_text().contains("First try."));
+    h.app.debug_save();
+    h.frames(2);
+    assert!(!h.app.is_dirty());
+    assert!(h.saved_text().contains("First try."), "the save after it works");
+}
+
+#[test]
+fn debug_mode_adds_a_script_from_outside_and_imports_a_problem_file() {
+    use crate::app::debug::Tool;
+    let mut h = Harness::new();
+    h.debug_on();
+    h.app.use_tool(Tool::Outside);
+    std::thread::sleep(Duration::from_millis(1600));
+    h.frames(2);
+    assert!(h.app.entries().iter().any(|e| e.title == "Written Outside"), "the library notices it");
+
+    h.app.use_tool(Tool::Problems);
+    h.frames(2);
+    assert!(h.app.debug_imported().is_some(), "the import report opens");
+
+    h.app.use_tool(Tool::Tour);
+    h.frames(1);
+    assert!(h.app.debug_tour().is_some());
+}

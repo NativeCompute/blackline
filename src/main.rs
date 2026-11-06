@@ -35,6 +35,9 @@ fn main() {
         println!("blackline {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    if let Some(demo) = ncf::updater::demo_from_args(&args) {
+        std::process::exit(ncf::updater::run_demo(blackline::INFO, demo));
+    }
     if let Some(plan) = ncf::updater::from_args(&args, ncf::OS) {
         match plan {
             Ok(plan) => std::process::exit(ncf::updater::run(blackline::INFO, plan)),
@@ -171,23 +174,8 @@ fn report(failures: &[String], started: bool) {
         "Blackline couldn't open its window. This usually means the graphics driver is missing or too old. Updating it usually fixes this; in a virtual machine, turn on 3D acceleration."
     };
     let detail = failures.join("\n");
-    let root = storage::library_root();
-    let log = root.join("error.log");
-    let line = format!(
-        "{} blackline {}\n{}\n\n",
-        chrono::Local::now().to_rfc3339(),
-        env!("CARGO_PKG_VERSION"),
-        detail
-    );
-    let saved = std::fs::create_dir_all(&root).is_ok()
-        && std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log)
-            .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()))
-            .is_ok();
     let mut text = format!("{what}\n\n{detail}");
-    if saved {
+    if let Some(log) = storage::write_error_log(&detail) {
         text.push_str(&format!("\n\nThis was also written to {}", log.display()));
     }
     if let Some(dir) = std::env::args().position(|a| a == "--smoke").and_then(|i| std::env::args().nth(i + 1)) {

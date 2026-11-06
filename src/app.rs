@@ -31,6 +31,7 @@ mod reports;
 mod imported;
 pub mod onboarding;
 mod voices;
+pub mod debug;
 
 const FULL_SIZE: Vec2 = Vec2::new(1320.0, 900.0);
 const MIN_SIZE: Vec2 = Vec2::new(880.0, 580.0);
@@ -70,6 +71,7 @@ pub enum Ask {
     RenameScript,
     RestoreSnapshot(PathBuf),
     Update(String),
+    Nothing,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -218,6 +220,9 @@ pub struct App {
     page_key: String,
     page_born: Instant,
     splash: Option<Splash>,
+    splash_replaying: bool,
+    debug: ncf::debug::Debug,
+    version_rect: Rect,
     settled: bool,
     pub arrivals: Vec<PathBuf>,
 }
@@ -240,6 +245,7 @@ impl App {
 
     pub fn with_store(ctx: &egui::Context, mut store: Box<dyn Store>) -> Self {
         let settings = store.read_settings();
+        let debug = ncf::debug::Debug::new(settings.debug);
         theme::set_palette(!settings.light_mode);
         anim::set_enabled(settings.animations);
         theme::apply(ctx);
@@ -351,6 +357,9 @@ impl App {
             page_key: String::new(),
             page_born: Instant::now(),
             splash,
+            splash_replaying: false,
+            debug,
+            version_rect: Rect::NOTHING,
             settled: false,
             arrivals: Vec::new(),
         };
@@ -974,6 +983,7 @@ impl App {
             }
             Ask::RestoreSnapshot(p) => self.restore_snapshot(&p),
             Ask::Update(version) => self.start_update(&version),
+            Ask::Nothing => {}
         }
     }
 
@@ -3498,15 +3508,7 @@ impl App {
                 .color(p.text_faint),
             );
             ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(format!(
-                    "Page font: {} · Blackline {}",
-                    theme::PAGE_FONT_NAME,
-                    env!("CARGO_PKG_VERSION")
-                ))
-                .font(theme::font(theme::T_MICRO))
-                .color(p.text_faint),
-            );
+            self.version_line(ui);
             self.about_updates(ui);
             self.about_maker(ui);
             }
@@ -3529,15 +3531,7 @@ impl App {
                 }
             });
             ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(format!(
-                    "Page font: {} · Blackline {}",
-                    theme::PAGE_FONT_NAME,
-                    env!("CARGO_PKG_VERSION")
-                ))
-                .font(theme::font(theme::T_MICRO))
-                .color(p.text_faint),
-            );
+            self.version_line(ui);
             self.about_updates(ui);
             self.about_maker(ui);
             }
@@ -3956,6 +3950,7 @@ impl App {
         }
         self.popovers(ctx);
         self.tour_overlay(ctx);
+        self.debug_panel(ctx);
         chrome::resize_handles(ctx);
 
         if let Some(answer) = self.deck.show(ctx) {
@@ -3967,13 +3962,16 @@ impl App {
             self.settled = crate::splash::settle(ctx, FULL_SIZE);
         }
         if let Some(splash) = self.splash.as_mut() {
-            splash.set_status(self.update.clone());
+            if !self.splash_replaying {
+                splash.set_status(self.update.clone());
+            }
             if splash.show(ctx) {
                 if own_window && self.frame_no < 3 {
                     crate::splash::centre(ctx, crate::splash::CARD);
                 }
             } else {
                 self.splash = None;
+                self.splash_replaying = false;
                 if own_window {
                     let full = chrome::fit(FULL_SIZE, ctx.input(|i| i.viewport().monitor_size), ncf::OS);
                     ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(MIN_SIZE));
