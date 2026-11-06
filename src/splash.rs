@@ -9,6 +9,12 @@ impl Default for Splash {
 }
 
 impl Splash {
+    pub fn replay(status: crate::update::Status) -> Splash {
+        let mut s = ncf::splash::Splash::inline(crate::INFO);
+        s.set_status(status);
+        Splash(s)
+    }
+
     pub fn set_status(&mut self, status: crate::update::Status) {
         self.0.set_status(status);
     }

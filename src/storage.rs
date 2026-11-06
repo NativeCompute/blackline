@@ -477,7 +477,18 @@ fn push_paren(doc: &mut Document, id: &mut u64, inside: &str) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+static FAIL_NEXT_SAVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn fail_next_save() {
+    FAIL_NEXT_SAVE.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save(path: &Path, doc: &Document) -> io::Result<()> {
+    if FAIL_NEXT_SAVE.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return Err(io::Error::other("the disk refused the write (a test failure from debug mode)"));
+    }
     ensure_dirs()?;
     let tmp = path.with_extension("md.tmp");
     fs::write(&tmp, to_markdown(doc))?;
@@ -693,6 +704,26 @@ fn quiet(program: &str) -> std::process::Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_error_log(detail: &str) -> Option<PathBuf> {
+    let root = library_root();
+    let log = root.join("error.log");
+    let line = format!(
+        "{} blackline {}\n{}\n\n",
+        chrono::Local::now().to_rfc3339(),
+        env!("CARGO_PKG_VERSION"),
+        detail
+    );
+    let saved = fs::create_dir_all(&root).is_ok()
+        && fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+            .and_then(|mut f| io::Write::write_all(&mut f, line.as_bytes()))
+            .is_ok();
+    saved.then_some(log)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
