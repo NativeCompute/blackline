@@ -209,7 +209,6 @@ pub struct App {
     left_rows: Vec<(u64, Rect)>,
     report: crate::report::Report,
     report_tab: usize,
-    update_rect: Rect,
     tour: Option<onboarding::Tour>,
     imported: Option<imported::Imported>,
     report_rows: Vec<(u64, Rect)>,
@@ -221,6 +220,7 @@ pub struct App {
     page_born: Instant,
     splash: Option<Splash>,
     splash_replaying: bool,
+    offer: Option<ncf::splash::Offer>,
     debug: ncf::debug::Debug,
     version_rect: Rect,
     settled: bool,
@@ -347,7 +347,6 @@ impl App {
             left_rows: Vec::new(),
             report: crate::report::Report::default(),
             report_tab: 0,
-            update_rect: Rect::NOTHING,
             tour: None,
             imported: None,
             report_rows: Vec::new(),
@@ -358,6 +357,7 @@ impl App {
             page_born: Instant::now(),
             splash,
             splash_replaying: false,
+            offer: None,
             debug,
             version_rect: Rect::NOTHING,
             settled: false,
@@ -3544,14 +3544,77 @@ impl App {
         if let Some(rx) = &self.update_rx {
             if let Ok(status) = rx.try_recv() {
                 self.update_rx = None;
-                if let crate::update::Status::Newer(r) = &status {
-                    self.deck.say(
-                        &format!("Blackline {} is out", r.version),
-                        "Download it from Settings → About.",
-                        Tone::Info,
-                    );
-                }
                 self.update = status;
+                self.offer = self.offer_for_update();
+            }
+        }
+    }
+
+    fn offer_for_update(&self) -> Option<ncf::splash::Offer> {
+        let crate::update::Status::Newer(r) = &self.update else {
+            return None;
+        };
+        if r.version.trim() == self.settings.dismissed_update.trim() {
+            return None;
+        }
+        Some(ncf::splash::Offer { version: r.version.clone(), can_update: self.update_plan().is_some() })
+    }
+
+    fn answer_offer(&mut self, choice: ncf::splash::Choice) {
+        use ncf::splash::Choice;
+        match choice {
+            Choice::UpdateNow(version) => self.start_update(&version),
+            Choice::Download(_) => self.store.open_url(&crate::update::releases_latest(crate::INFO.repo)),
+            Choice::Skip(version) => {
+                self.settings.dismissed_update = version;
+                self.save_settings();
+            }
+            Choice::NotNow => {}
+        }
+    }
+
+    fn launch(&mut self, ctx: &egui::Context) {
+        let own_window = self.splash.as_ref().map(|s| !s.is_inline()).unwrap_or(false);
+        if !own_window && !self.settled {
+            self.settled = crate::splash::settle(ctx, FULL_SIZE);
+        }
+        if let Some(splash) = self.splash.as_mut() {
+            if !self.splash_replaying {
+                splash.set_status(self.update.clone());
+                if splash.wants_offer() {
+                    if let Some(offer) = self.offer.take() {
+                        splash.set_offer(offer);
+                    }
+                }
+            }
+            let showing = splash.show(ctx);
+            if let Some(choice) = splash.take_choice() {
+                if !self.splash_replaying {
+                    self.answer_offer(choice);
+                }
+            }
+            if showing {
+                if own_window && self.frame_no < 3 {
+                    crate::splash::centre(ctx, crate::splash::CARD);
+                }
+            } else {
+                self.splash = None;
+                self.splash_replaying = false;
+                if own_window {
+                    let full = chrome::fit(FULL_SIZE, ctx.input(|i| i.viewport().monitor_size), ncf::OS);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(MIN_SIZE));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(full));
+                    crate::splash::centre(ctx, full);
+                }
+            }
+        }
+
+        if self.splash.is_none() {
+            if let Some(offer) = self.offer.clone() {
+                if let Some(choice) = ncf::splash::prompt(ctx, &crate::INFO, &offer) {
+                    self.offer = None;
+                    self.answer_offer(choice);
+                }
             }
         }
     }
@@ -3897,6 +3960,7 @@ impl App {
         }
 
         chrome::backdrop(ctx, self.window_ground());
+        self.launch(ctx);
 
         if self.tour.is_some() {
             self.tour_keys(ctx);
@@ -3951,30 +4015,6 @@ impl App {
 
         if let Some(answer) = self.deck.show(ctx) {
             self.answer(answer);
-        }
-
-        let own_window = self.splash.as_ref().map(|s| !s.is_inline()).unwrap_or(false);
-        if !own_window && !self.settled {
-            self.settled = crate::splash::settle(ctx, FULL_SIZE);
-        }
-        if let Some(splash) = self.splash.as_mut() {
-            if !self.splash_replaying {
-                splash.set_status(self.update.clone());
-            }
-            if splash.show(ctx) {
-                if own_window && self.frame_no < 3 {
-                    crate::splash::centre(ctx, crate::splash::CARD);
-                }
-            } else {
-                self.splash = None;
-                self.splash_replaying = false;
-                if own_window {
-                    let full = chrome::fit(FULL_SIZE, ctx.input(|i| i.viewport().monitor_size), ncf::OS);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(MIN_SIZE));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(full));
-                    crate::splash::centre(ctx, full);
-                }
-            }
         }
 
         if let Some(last) = self.last_change {
@@ -4161,9 +4201,6 @@ impl App {
     }
     pub fn debug_set_update(&mut self, status: crate::update::Status) {
         self.update = status;
-    }
-    pub fn debug_update_rect(&self) -> Rect {
-        self.update_rect
     }
     pub fn debug_library_button(&self) -> Rect {
         self.library_button
