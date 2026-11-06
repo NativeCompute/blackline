@@ -36,9 +36,9 @@ look, in a dark cast and a light one.
   every hint, and your scripts in `~/Library/Application Support/Blackline`.
 - **Quitting saves** whatever you typed in the last few seconds, however the
   app is quit: `Cmd+Q`, the menu, logging out or shutting down.
-- **Updates in one click**, on every platform: *Update now* on Home closes
-  Blackline, installs the new version in a small updater window and opens
-  it again. See [Updates](#updates).
+- **Updates in one click**, on every platform: when a new version is out,
+  Blackline asks as it opens. *Update now* installs it in a small updater
+  window and opens Blackline again. See [Updates](#updates).
 
 ## New in 2.1: Blue Pages
 
@@ -105,7 +105,7 @@ It downloads the latest release, checks it against its checksum, puts
 **Blackline** in your Applications folder (`~/Applications` if your account
 cannot write to `/Applications`) and opens it. Nothing needs your password.
 
-- **Updating:** click **Update now** when Home says a new version is out
+- **Updating:** click **Update now** when Blackline says a new version is out
   (see [Updates](#updates)), or run the same line again. If Blackline is
   open, the line waits for you to quit it (`Cmd+Q`) and carries on.
 - **Your scripts** live in `~/Library/Application Support/Blackline/scripts`.
@@ -508,10 +508,14 @@ request to GitHub's public API and nothing else — no account, no identifier,
 just the app's version in the request header. The splash card says how the
 check went. Turn the check off in Settings → About.
 
-When there is a newer version, Home shows a notice with **Update now**. Click
-it and confirm, and:
+When there is a newer version, Blackline asks before it opens: the splash
+card turns into a short question with **Update now**, **Not now** and **Skip
+this version** (with the splash turned off, the same card appears over the
+window, and nothing else can be used until it is answered). Click **Update
+now**, and:
 
-1. Blackline saves anything unsaved and closes;
+1. Blackline closes (Update now in Settings → About saves anything unsaved
+   first);
 2. a small updater window takes over: it downloads that exact release, checks
    it against its checksum, copies your library aside, installs the new
    version and opens Blackline again;
@@ -525,9 +529,10 @@ library folder.
 *Update now* is offered on a Mac when Blackline is in Applications, on Linux
 when it was installed with `install.sh`, and on Windows when the folder with
 `blackline.exe` is writable. Anywhere else, for instance a copy built from
-source, the notice offers *Download* instead. Dismiss the notice and that
-version does not come up again; nothing is ever downloaded or installed
-without you clicking.
+source, the card offers *Download* instead. *Not now* asks again next time
+Blackline opens; *Skip this version* never asks about that version again.
+Settings → About still offers *Update now* any time. Nothing is ever
+downloaded or installed without you clicking.
 
 ---
 
@@ -619,7 +624,7 @@ the dark and light casts are all exercised for real.
 | `src/editor.rs` | The page: block rendering and every structural keystroke |
 | `src/cards.rs` / `src/pages.rs` | Cards, and Reading mode |
 | `src/app.rs` | Shell — ribbon, navigator, popovers, autosave, undo |
-| `src/app/home.rs` | Home: the script picker the app opens on, search inside every script, the update notice |
+| `src/app/home.rs` | Home: the script picker the app opens on, and search inside every script |
 | `src/app/notes.rs` | The note window, the Notes and Changes panel, starting and ending a revision |
 | `src/app/reports.rs` `src/report.rs` | The Reports window, and the figures behind it |
 | `src/app/imported.rs` | The window listing what an import could not keep |
