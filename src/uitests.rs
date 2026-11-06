@@ -1131,24 +1131,40 @@ fn an_import_with_problems_opens_a_report_that_points_at_them() {
 }
 
 #[test]
-fn home_says_when_an_update_is_out_until_it_is_dismissed() {
+fn a_new_version_asks_before_anything_else_until_answered() {
     use crate::update::{Release, Status};
+    use ncf::splash::Choice;
     let mut h = Harness::with(1320.0, 900.0, "");
-    h.app.debug_go_home();
-    h.frames(2);
-    assert_eq!(h.app.debug_update_rect(), Rect::NOTHING, "nothing to say yet");
+    h.load(three_scenes());
+    let id = h.app.doc().blocks[2].id;
+    h.focus(id);
     let newer = |v: &str| Status::Newer(Release { version: v.into(), url: String::new() });
-    h.app.debug_set_update(newer("9.9.0"));
+    assert!(h.app.debug_update_offer().is_none(), "nothing to say yet");
+    h.app.debug_check_answers(newer("9.9.0"));
     h.frames(3);
-    let notice = h.app.debug_update_rect();
-    assert!(notice.width() > 300.0, "{notice:?}");
-    h.click(pos2(notice.right() - 25.0, notice.center().y));
-    h.frames(3);
-    assert_eq!(h.app.debug_update_rect(), Rect::NOTHING, "dismissed");
-    assert_eq!(storage::read_settings().dismissed_update, "9.9.0", "remembered");
-    h.app.debug_set_update(newer("9.9.1"));
-    h.frames(3);
-    assert!(h.app.debug_update_rect().width() > 300.0, "a later version speaks up again");
+    let offer = h.app.debug_update_offer().expect("the update is offered");
+    assert_eq!(offer.version, "9.9.0");
+    assert!(!offer.can_update, "a test build isn't installed the standard way, so it offers the download");
+    let before = h.app.doc().blocks.clone();
+    h.type_text("typed behind the popup");
+    h.press(Key::Z, Modifiers::COMMAND);
+    assert_eq!(h.app.doc().blocks, before, "nothing reaches the script until the popup is answered");
+    h.press(Key::Escape, Modifiers::NONE);
+    assert!(h.app.debug_update_offer().is_none(), "Escape is Not now");
+    assert_eq!(storage::read_settings().dismissed_update, "");
+
+    h.app.debug_check_answers(newer("9.9.0"));
+    h.frames(2);
+    assert!(h.app.debug_update_offer().is_some(), "Not now asks again next time");
+    h.app.debug_answer_offer(Choice::Skip("9.9.0".into()));
+    h.frames(2);
+    assert_eq!(storage::read_settings().dismissed_update, "9.9.0", "a skipped version is remembered");
+    h.app.debug_check_answers(newer("9.9.0"));
+    h.frames(2);
+    assert!(h.app.debug_update_offer().is_none(), "and not offered again");
+    h.app.debug_check_answers(newer("9.9.1"));
+    h.frames(2);
+    assert!(h.app.debug_update_offer().is_some(), "a later version asks again");
 }
 
 #[test]

@@ -100,7 +100,7 @@ impl App {
             Request::FakeUpdate => {
                 let version = ncf::debug::next_version(crate::INFO.version);
                 self.debug_offer_update(&version);
-                self.deck.say(&format!("Blackline {version} is out"), "A pretend release, from debug mode.", Tone::Info);
+                self.offer = self.offer_for_update();
             }
             #[cfg(not(target_arch = "wasm32"))]
             Request::UpdaterDemo(demo) => match ncf::updater::start_demo(*demo) {
@@ -224,6 +224,17 @@ impl App {
     }
     pub fn debug_splash_replaying(&self) -> bool {
         self.splash_replaying && self.splash.is_some()
+    }
+    pub fn debug_check_answers(&mut self, status: crate::update::Status) {
+        self.update = status;
+        self.offer = self.offer_for_update();
+    }
+    pub fn debug_update_offer(&self) -> Option<ncf::splash::Offer> {
+        self.offer.clone()
+    }
+    pub fn debug_answer_offer(&mut self, choice: ncf::splash::Choice) {
+        self.offer = None;
+        self.answer_offer(choice);
     }
     pub fn update_status(&self) -> &crate::update::Status {
         &self.update

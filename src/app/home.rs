@@ -127,7 +127,6 @@ impl App {
             });
         });
         ui.add_space(14.0);
-        self.update_notice(ui, w);
 
         // search here---
         let search = ui.add(
@@ -334,74 +333,6 @@ impl App {
             ui.add_space(12.0);
         }
         picked
-    }
-
-    fn update_notice(&mut self, ui: &mut egui::Ui, w: f32) {
-        self.update_rect = Rect::NOTHING;
-        let crate::update::Status::Newer(release) = self.update.clone() else {
-            return;
-        };
-        if self.settings.dismissed_update == release.version {
-            return;
-        }
-        let p = pal();
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 52.0), Sense::hover());
-        ui.painter().rect_filled(rect, egui::Rounding::same(theme::R_SM), theme::mix(p.solid, p.primary, 0.08));
-        ui.painter().rect_stroke(rect.shrink(0.5), egui::Rounding::same(theme::R_SM), Stroke::new(1.0_f32, p.primary_light));
-        icons::draw(ui.painter(), Rect::from_center_size(Pos2::new(rect.left() + 22.0, rect.center().y), Vec2::splat(14.0)), Icon::Download, p.primary_light);
-        ui.painter().text(
-            Pos2::new(rect.left() + 42.0, rect.center().y - 8.0),
-            egui::Align2::LEFT_CENTER,
-            format!("Blackline {} is out", release.version),
-            theme::font_semi(theme::T_SM),
-            p.text,
-        );
-        ui.painter().text(
-            Pos2::new(rect.left() + 42.0, rect.center().y + 9.0),
-            egui::Align2::LEFT_CENTER,
-            format!("You have {}. Your scripts stay where they are when you update.", env!("CARGO_PKG_VERSION")),
-            theme::font(theme::T_CAP),
-            p.text_faint,
-        );
-        let mut buttons = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(rect.shrink2(Vec2::new(12.0, 0.0)))
-                .layout(Layout::right_to_left(Align::Center)),
-        );
-        if ui::icon_button(&mut buttons, Icon::Close, "Not now · this version won't come up again", 26.0) {
-            self.settings.dismissed_update = release.version.clone();
-            self.save_settings();
-        }
-        buttons.add_space(4.0);
-        let can_update = self.update_plan().is_some();
-        if can_update {
-            let now = ui::button_response(&mut buttons, "Update now", Some(Icon::Download), true, None)
-                .on_hover_text("Blackline closes, installs the new version and opens again. Your scripts stay where they are.");
-            if now.clicked() {
-                self.ask_update(&release.version);
-            }
-            buttons.add_space(4.0);
-        }
-        let download = ui::button_response(&mut buttons, "Download", Some(Icon::External), !can_update, None);
-        let download = if can_update || crate::WEB {
-            download
-        } else {
-            download.on_hover_text("This copy wasn't installed the standard way, so it can't update itself. Download the new version instead.")
-        };
-        if download.clicked() {
-            self.store.open_url(&crate::update::releases_latest(crate::INFO.repo));
-        }
-        if ncf::OS.is_mac() && !can_update {
-            buttons.add_space(4.0);
-            let copy = ui::button_response(&mut buttons, "Copy update command", Some(Icon::Copy), false, None)
-                .on_hover_text("Paste it into Terminal: it installs the new version over this one and keeps your scripts.");
-            if copy.clicked() {
-                buttons.ctx().copy_text(crate::MAC_INSTALL.to_string());
-                self.deck.ok("Copied", "Paste it into Terminal and press Return.");
-            }
-        }
-        self.update_rect = rect;
-        ui.add_space(14.0);
     }
 
     pub(super) fn open_from_home(&mut self, path: PathBuf) {
