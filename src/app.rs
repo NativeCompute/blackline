@@ -2680,7 +2680,7 @@ impl App {
                         self.popover = None;
                     }
                     ui::separator(ui);
-                    if ui::menu_item(ui, &mut rects, "NativeCompute website", Icon::External, false) {
+                    if ncf::ui::menu_logo_item(ui, &mut rects) {
                         self.store.open_url(crate::NATIVECOMPUTE_URL);
                         self.popover = None;
                     }
@@ -3271,7 +3271,7 @@ impl App {
             }
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("Dark is NativeCompute's own: void black and one signal blue. Light is the same language on paper white.")
+                egui::RichText::new("Dark is the house look: void black and one signal blue. Light is the same language on paper white.")
                     .font(theme::font(theme::T_CAP))
                     .color(p.text_faint),
             );
@@ -3597,17 +3597,15 @@ impl App {
         ui::separator(ui);
         ui::section(ui, "Made by");
         ui.add_space(2.0);
-        ncf::ui::logo(ui, (theme::T_H * 1.25).round(), p.text).on_hover_text("NativeCompute");
+        if ncf::ui::logo_link(ui, (theme::T_H * 1.25).round(), p.text) {
+            self.store.open_url(crate::NATIVECOMPUTE_URL);
+        }
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new("Blackline is free and open source, made by NativeCompute.")
+            egui::RichText::new("Blackline is free and open source.")
                 .font(theme::font(theme::T_CAP))
                 .color(p.text_dim),
         );
-        ui.add_space(4.0);
-        if ui::link(ui, "nativecompute.net") {
-            self.store.open_url(crate::NATIVECOMPUTE_URL);
-        }
     }
 
     // keys here---
