@@ -35,11 +35,32 @@ fn main() {
         println!("blackline {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    if let Some(plan) = ncf::updater::from_args(&args, ncf::OS) {
+        match plan {
+            Ok(plan) => std::process::exit(ncf::updater::run(blackline::INFO, plan)),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
+    }
+    ncf::updater::tidy("blackline");
 
+    let update_smoke = args.iter().position(|a| a == "--smoke-update").map(|i| {
+        let version = args.get(i + 2).cloned().unwrap_or_default();
+        if let Some(source) = args.get(i + 3) {
+            std::env::set_var("NCF_UPDATE_SOURCE", source);
+        }
+        let dir = std::path::PathBuf::from(args.get(i + 1).cloned().unwrap_or_else(|| "blackline-smoke".to_string()));
+        let dir = std::fs::create_dir_all(&dir).and_then(|_| dir.canonicalize()).unwrap_or(dir);
+        std::env::set_var("NCF_UPDATE_SHOT", dir.join("updater.png"));
+        (dir, version)
+    });
     let smoke = args
         .iter()
         .position(|a| a == "--smoke")
-        .map(|i| std::path::PathBuf::from(args.get(i + 1).cloned().unwrap_or_else(|| "blackline-smoke".to_string())));
+        .map(|i| std::path::PathBuf::from(args.get(i + 1).cloned().unwrap_or_else(|| "blackline-smoke".to_string())))
+        .or_else(|| update_smoke.as_ref().map(|(dir, _)| dir.clone()));
     let only = args
         .iter()
         .position(|a| a == "--renderer")
@@ -92,6 +113,7 @@ fn main() {
         let files = files.clone();
         let flag = started.clone();
         let smoke_dir = smoke.clone();
+        let update_version = update_smoke.as_ref().map(|(_, v)| v.clone());
         let run = std::panic::catch_unwind(AssertUnwindSafe(|| {
             eframe::run_native(
                 "Blackline",
@@ -100,15 +122,19 @@ fn main() {
                     flag.store(true, Ordering::SeqCst);
                     let mut app = app::App::new(cc);
                     app.arrivals = files;
-                    match smoke_dir {
-                        Some(dir) => Ok(Box::new(smoke::Smoke::new(app, dir, renderer.to_string())) as Box<dyn eframe::App>),
-                        None => Ok(Box::new(app) as Box<dyn eframe::App>),
+                    match (smoke_dir, update_version) {
+                        (Some(dir), Some(version)) => Ok(Box::new(smoke::UpdateSmoke::new(app, dir, version)) as Box<dyn eframe::App>),
+                        (Some(dir), None) => Ok(Box::new(smoke::Smoke::new(app, dir, renderer.to_string())) as Box<dyn eframe::App>),
+                        (None, _) => Ok(Box::new(app) as Box<dyn eframe::App>),
                     }
                 }),
             )
         }));
         let failure = match run {
             Ok(Ok(())) => {
+                if let (Some(dir), Some(_)) = (&smoke, &update_smoke) {
+                    std::process::exit(smoke::finish_update(dir));
+                }
                 if let Some(dir) = &smoke {
                     std::process::exit(smoke::finish(dir));
                 }

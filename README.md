@@ -36,6 +36,9 @@ look, in a dark cast and a light one.
   every hint, and your scripts in `~/Library/Application Support/Blackline`.
 - **Quitting saves** whatever you typed in the last few seconds, however the
   app is quit: `Cmd+Q`, the menu, logging out or shutting down.
+- **Updates in one click**, on every platform: *Update now* on Home closes
+  Blackline, installs the new version in a small updater window and opens
+  it again. See [Updates](#updates).
 
 ## New in 2.1: Blue Pages
 
@@ -102,9 +105,9 @@ It downloads the latest release, checks it against its checksum, puts
 **Blackline** in your Applications folder (`~/Applications` if your account
 cannot write to `/Applications`) and opens it. Nothing needs your password.
 
-- **Updating:** run the same line again. If Blackline is open, it waits for
-  you to quit it (`Cmd+Q`) and carries on. Home's update notice has a *Copy
-  update command* button with this line in it.
+- **Updating:** click **Update now** when Home says a new version is out
+  (see [Updates](#updates)), or run the same line again. If Blackline is
+  open, the line waits for you to quit it (`Cmd+Q`) and carries on.
 - **Your scripts** live in `~/Library/Application Support/Blackline/scripts`.
   Before every install the whole library is copied to
   `~/Library/Application Support/Blackline-backup-<date>`; nothing in it is
@@ -502,12 +505,29 @@ you set one, and the button stays hidden until then.
 Blackline checks once per launch whether a newer version has been released
 on [GitHub](https://github.com/NativeCompute/blackline/releases). It sends one
 request to GitHub's public API and nothing else — no account, no identifier,
-just the app's version in the request header. When there is a newer version it
-says so and links to the release page; nothing is downloaded or installed by
-itself. On a Mac the notice also offers *Copy update command*, the Terminal
-line from [Installing](#on-a-mac). The splash card says how the check went, and Home shows a notice with
-a *Download* button while a newer version is out; dismiss it and that version
-does not come up again. Turn the check off in Settings → About.
+just the app's version in the request header. The splash card says how the
+check went. Turn the check off in Settings → About.
+
+When there is a newer version, Home shows a notice with **Update now**. Click
+it and confirm, and:
+
+1. Blackline saves anything unsaved and closes;
+2. a small updater window takes over: it downloads that exact release, checks
+   it against its checksum, copies your library aside, installs the new
+   version and opens Blackline again;
+3. if anything goes wrong, it says what and why, and the version you had is
+   still installed. Nothing is changed until the download has been checked
+   and the new version has been seen to run.
+
+Your scripts are never touched. Every step is written to `update.log` in the
+library folder.
+
+*Update now* is offered on a Mac when Blackline is in Applications, on Linux
+when it was installed with `install.sh`, and on Windows when the folder with
+`blackline.exe` is writable. Anywhere else, for instance a copy built from
+source, the notice offers *Download* instead. Dismiss the notice and that
+version does not come up again; nothing is ever downloaded or installed
+without you clicking.
 
 ---
 

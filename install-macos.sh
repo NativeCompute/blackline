@@ -5,6 +5,11 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
+BLACKLINE_SOURCE="${BLACKLINE_SOURCE:-${NCF_INSTALL_SOURCE:-}}"
+BLACKLINE_APP_DIR="${BLACKLINE_APP_DIR:-${NCF_INSTALL_APP_DIR:-}}"
+BLACKLINE_NO_OPEN="${BLACKLINE_NO_OPEN:-${NCF_INSTALL_NO_OPEN:-}}"
+BLACKLINE_WAIT_SECONDS="${BLACKLINE_WAIT_SECONDS:-${NCF_INSTALL_WAIT:-}}"
+
 SOURCE="${BLACKLINE_SOURCE:-https://github.com/NativeCompute/blackline/releases/latest/download}"
 ZIP="blackline-macos.zip"
 APP_NAME="Blackline.app"

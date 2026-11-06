@@ -146,6 +146,23 @@ jobs:
           /bin/bash ./install.sh
           "$BLACKLINE_APP_DIR/Blackline.app/Contents/MacOS/blackline" --version
           codesign --verify --deep --strict "$BLACKLINE_APP_DIR/Blackline.app"
+      - name: Build the next version too, for the update check
+        run: |
+          old="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          new="$(echo "$old" | awk -F. '{print $1"."$2"."$3+1}')"
+          sed -i '' "1,/^version = \"$old\"/s/^version = \"$old\"/version = \"$new\"/" Cargo.toml
+          packaging/macos/bundle.sh --out dist-next
+          cp install-macos.sh dist-next/
+          printf '%s %s\n' "$old" "$new" > dist-next/versions
+          git checkout Cargo.toml Cargo.lock
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app-next
+          path: |
+            dist-next/blackline-macos.zip
+            dist-next/blackline-macos.zip.sha256
+            dist-next/install-macos.sh
+            dist-next/versions
 
   macos-install:
     name: macOS ${{ matrix.os }} — install, open, update, uninstall
@@ -173,3 +190,125 @@ jobs:
             ${{ runner.temp }}/blackline-verify/*/shots/
             ${{ runner.temp }}/blackline-verify/*.log
             ${{ runner.temp }}/blackline-verify/*.err
+
+  macos-update:
+    name: macOS ${{ matrix.os }} — Update now, from one release to the next
+    needs: macos-app
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26, macos-15-intel, macos-26-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-app
+          path: old
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-app-next
+          path: new
+      - name: Install, update from the app, check the result
+        timeout-minutes: 15
+        run: |
+          read -r old new < new/versions
+          /bin/bash packaging/macos/verify-update.sh old new "$old" "$new"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: update-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/blackline-update-check/smoke/report.txt
+            ${{ runner.temp }}/blackline-update-check/smoke/updater.png
+            ${{ runner.temp }}/blackline-update-check/smoke/data/Blackline/update.log
+            ${{ runner.temp }}/blackline-update-check/*.log
+
+  linux-update:
+    name: Linux — Update now, from one release to the next
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install a virtual display
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgl1-mesa-dri libxkbcommon-x11-0
+      - name: Pack this version and the next, as released
+        run: |
+          old="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          new="$(echo "$old" | awk -F. '{print $1"."$2"."$3+1}')"
+          rel="$RUNNER_TEMP/releases"
+          mkdir -p "$rel"
+          pack() {
+            name="blackline-v$1-linux-x86_64"
+            mkdir -p "$RUNNER_TEMP/pack/$name/packaging"
+            cp target/release/blackline install.sh README.md LICENSE "$RUNNER_TEMP/pack/$name/"
+            cp packaging/blackline.desktop packaging/blackline.svg "$RUNNER_TEMP/pack/$name/packaging/"
+            tar -czf "$rel/$name.tar.gz" -C "$RUNNER_TEMP/pack" "$name"
+            (cd "$rel" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          }
+          cargo build --release
+          pack "$old"
+          sed -i "0,/^version = \"$old\"/s//version = \"$new\"/" Cargo.toml
+          cargo build --release
+          pack "$new"
+          git checkout Cargo.toml Cargo.lock
+          echo "OLD=$old" >> "$GITHUB_ENV"
+          echo "NEW=$new" >> "$GITHUB_ENV"
+      - name: Install, update from the app, check the result
+        timeout-minutes: 10
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          WINIT_UNIX_BACKEND: x11
+        run: xvfb-run -a -s "-screen 0 1400x1000x24" bash packaging/linux/verify-update.sh "$RUNNER_TEMP/releases" "$OLD" "$NEW"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: update-linux
+          path: |
+            ${{ runner.temp }}/blackline-update-check/smoke/report.txt
+            ${{ runner.temp }}/blackline-update-check/smoke/updater.png
+            ${{ runner.temp }}/blackline-update-check/smoke/data/blackline/update.log
+            ${{ runner.temp }}/blackline-update-check/*.log
+
+  windows-update:
+    name: Windows — Update now, from one release to the next
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Pack this version and the next, as released
+        shell: pwsh
+        run: |
+          $old = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $parts = $old.Split('.')
+          $new = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
+          $rel = Join-Path $env:RUNNER_TEMP "releases"
+          New-Item -ItemType Directory -Path $rel -Force | Out-Null
+          function Pack($version) {
+            $name = "blackline-v$version-windows-x86_64"
+            $stage = Join-Path $env:RUNNER_TEMP "pack\$name"
+            New-Item -ItemType Directory -Path $stage -Force | Out-Null
+            Copy-Item target/release/blackline.exe, README.md, LICENSE -Destination $stage
+            Compress-Archive -Path $stage -DestinationPath (Join-Path $rel "$name.zip")
+            $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $rel "$name.zip")).Hash.ToLower()
+            "$hash  $name.zip" | Out-File -Encoding ascii -NoNewline (Join-Path $rel "$name.zip.sha256")
+          }
+          cargo build --release
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Pack $old
+          $text = Get-Content Cargo.toml -Raw
+          $text = ([regex]('version = "' + [regex]::Escape($old) + '"')).Replace($text, "version = `"$new`"", 1)
+          Set-Content -Path Cargo.toml -Value $text -NoNewline
+          cargo build --release
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Pack $new
+          git checkout Cargo.toml Cargo.lock
+          "OLD=$old" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "NEW=$new" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Update, check the result
+        timeout-minutes: 10
+        shell: pwsh
+        run: ./packaging/windows/verify-update.ps1 -Releases "$env:RUNNER_TEMP/releases" -Old $env:OLD -New $env:NEW
+

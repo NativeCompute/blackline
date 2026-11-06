@@ -36,10 +36,11 @@ jobs:
           cp target/release/blackline install.sh README.md LICENSE "$name/"
           cp packaging/blackline.desktop packaging/blackline.svg "$name/packaging/"
           tar -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: linux
-          path: blackline-*.tar.gz
+          path: blackline-*.tar.gz*
 
   windows:
     name: Windows build
@@ -57,10 +58,12 @@ jobs:
           New-Item -ItemType Directory -Path $name | Out-Null
           Copy-Item target/release/blackline.exe, README.md, LICENSE -Destination $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "$name.zip").Hash.ToLower()
+          "$hash  $name.zip" | Out-File -Encoding ascii -NoNewline "$name.zip.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: blackline-*.zip
+          path: blackline-*.zip*
 
   macos:
     name: macOS build (universal)
@@ -137,5 +140,6 @@ jobs:
             blackline-*.tar.gz
             blackline-*.zip
             blackline-*.zip.sha256
+            blackline-*.tar.gz.sha256
             install-macos.sh
           generate_release_notes: true

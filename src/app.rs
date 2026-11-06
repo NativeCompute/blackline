@@ -69,6 +69,7 @@ pub enum Ask {
     DeleteScene(usize),
     RenameScript,
     RestoreSnapshot(PathBuf),
+    Update(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -159,6 +160,7 @@ pub struct App {
     update: crate::update::Status,
     #[cfg(not(target_arch = "wasm32"))]
     update_rx: Option<std::sync::mpsc::Receiver<crate::update::Status>>,
+    quit_for_update: bool,
     theme_dirty: bool,
 
     dirty: bool,
@@ -298,6 +300,7 @@ impl App {
             update: crate::update::Status::Off,
             #[cfg(not(target_arch = "wasm32"))]
             update_rx: None,
+            quit_for_update: false,
             theme_dirty: false,
             dirty: false,
             last_change: None,
@@ -970,8 +973,52 @@ impl App {
                 }
             }
             Ask::RestoreSnapshot(p) => self.restore_snapshot(&p),
+            Ask::Update(version) => self.start_update(&version),
         }
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn update_plan(&self) -> Option<ncf::updater::Plan> {
+        let crate::update::Status::Newer(release) = &self.update else {
+            return None;
+        };
+        ncf::updater::Plan::for_release(&crate::INFO, &release.version, storage::library_root())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn update_plan(&self) -> Option<()> {
+        None
+    }
+
+    pub(super) fn ask_update(&mut self, version: &str) {
+        self.deck.ask(
+            &format!("Update to {version}?"),
+            &format!("Blackline closes, updates itself to {version} and opens again. Anything unsaved is saved first, and your scripts stay where they are."),
+            "Update now",
+            Tone::Info,
+            Ask::Update(version.to_string()),
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_update(&mut self, version: &str) {
+        let Some(plan) = self.update_plan().filter(|p| p.version == version.trim_start_matches(['v', 'V'])) else {
+            self.deck.say("This copy can't update itself", "Download the new version from the release page instead.", Tone::Warn);
+            return;
+        };
+        self.save_before_quit();
+        if self.dirty {
+            self.deck.say("Not updating yet", "The script could not be saved, so Blackline stays open. Save it somewhere first.", Tone::Danger);
+            return;
+        }
+        match ncf::updater::start(&plan) {
+            Ok(()) => self.quit_for_update = true,
+            Err(e) => self.deck.say("Couldn't start the update", &e, Tone::Danger),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn start_update(&mut self, _version: &str) {}
 
     fn ask_delete(&mut self, path: PathBuf) {
         let title = self
@@ -3947,12 +3994,35 @@ impl App {
         if ctx.input(|i| i.viewport().close_requested()) {
             self.save(true);
         }
+        if self.quit_for_update {
+            self.quit_for_update = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         ctx.request_repaint_after(Duration::from_millis(500));
     }
 }
 
 #[allow(dead_code)]
 impl App {
+    pub fn debug_offer_update(&mut self, version: &str) {
+        self.update = crate::update::Status::Newer(crate::update::Release {
+            version: version.to_string(),
+            url: crate::update::releases_latest(crate::INFO.repo),
+        });
+        self.settings.dismissed_update.clear();
+    }
+    pub fn debug_update_now(&mut self, version: &str) {
+        self.start_update(version);
+    }
+    pub fn debug_ask_update(&mut self, version: &str) {
+        self.ask_update(version);
+    }
+    pub fn debug_quitting_for_update(&self) -> bool {
+        self.quit_for_update
+    }
+    pub fn debug_update_offered(&self) -> bool {
+        self.update_plan().is_some()
+    }
     pub fn debug_run(&mut self, cmd: keys::Command) {
         self.run(cmd);
     }

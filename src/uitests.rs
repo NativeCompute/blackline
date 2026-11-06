@@ -1152,6 +1152,23 @@ fn home_says_when_an_update_is_out_until_it_is_dismissed() {
 }
 
 #[test]
+fn update_now_asks_first_and_a_copy_that_cannot_update_itself_stays_open() {
+    use crate::update::{Release, Status};
+    let mut h = Harness::with(1320.0, 900.0, "");
+    h.app.debug_go_home();
+    h.app.debug_set_update(Status::Newer(Release { version: "9.9.0".into(), url: String::new() }));
+    h.frames(3);
+    assert!(!h.app.debug_update_offered(), "a test build isn't installed the standard way, so Download is offered instead");
+    h.app.debug_ask_update("9.9.0");
+    h.frames(2);
+    assert!(h.app.debug_pending_ask(), "Update now always asks first");
+    h.press(Key::Enter, Modifiers::NONE);
+    h.frames(3);
+    assert!(!h.app.debug_pending_ask());
+    assert!(!h.app.debug_quitting_for_update(), "nothing to hand over to, so Blackline stays open");
+}
+
+#[test]
 fn whats_new_shows_once_takes_the_keys_and_can_be_replayed() {
     use crate::app::onboarding::Kind;
     let mut h = Harness::with(1320.0, 900.0, "onboarded = \n");
