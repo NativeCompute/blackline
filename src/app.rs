@@ -3596,11 +3596,9 @@ impl App {
         let p = pal();
         ui::separator(ui);
         ui::section(ui, "Made by");
-        ui.label(
-            egui::RichText::new("NativeCompute")
-                .font(theme::font_bold(theme::T_H))
-                .color(p.text),
-        );
+        ui.add_space(2.0);
+        ncf::ui::logo(ui, (theme::T_H * 1.25).round(), p.text).on_hover_text("NativeCompute");
+        ui.add_space(4.0);
         ui.label(
             egui::RichText::new("Blackline is free and open source, made by NativeCompute.")
                 .font(theme::font(theme::T_CAP))
