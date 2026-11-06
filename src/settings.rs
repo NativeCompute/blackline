@@ -105,6 +105,7 @@ pub struct Settings {
     pub pdf_character_colors: bool,
     pub pdf_notes: bool,
     pub keys: crate::keys::Keymap,
+    pub debug: bool,
 }
 
 pub const DEFAULT_YOUTRACK: &str = "";
@@ -147,6 +148,7 @@ impl Default for Settings {
             pdf_character_colors: false,
             pdf_notes: false,
             keys: crate::keys::Keymap::default(),
+            debug: false,
         }
     }
 }
@@ -225,6 +227,7 @@ impl Settings {
         } else {
             ""
         } + &self.keys.serialize()
+            + if self.debug { "debug = yes\n" } else { "" }
     }
 
     pub fn parse(text: &str) -> Settings {
@@ -281,6 +284,7 @@ impl Settings {
                 "pdf_character_colors" => s.pdf_character_colors = yes(v),
                 "pdf_notes" => s.pdf_notes = yes(v),
                 "check_updates" => s.check_updates = yes(v),
+                "debug" => s.debug = yes(v),
                 "youtrack_url" => {
                     s.youtrack_url = v.to_string()
                 }

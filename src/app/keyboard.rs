@@ -42,14 +42,14 @@ impl App {
         }
         let chord = keys::chord(mods, key);
         if let Some(why) = keys::refused(&chord, crate::WEB) {
-            self.key_refusal = Some((cmd, format!("{}: {why}", keys::text(&chord))));
+            self.key_refusal = Some((cmd, format!("{}: {why}", keys::label(&chord))));
             return;
         }
         let commands = self.commands();
         if let Some(other) = self.settings.keys.taken_by(&chord, cmd, &commands, crate::WEB) {
             self.key_refusal = Some((
                 cmd,
-                format!("{} is already {}. Give that one another shortcut first.", keys::text(&chord), other.label()),
+                format!("{} is already {}. Give that one another shortcut first.", keys::label(&chord), other.label()),
             ));
             return;
         }
@@ -97,7 +97,7 @@ impl App {
         }
         ui.label(
             egui::RichText::new(
-                "Writing keys stay as they are: Enter, Tab and Shift+Tab, Backspace, and Alt+Up and Down to move a block.",
+                format!("Writing keys stay as they are: Enter, Tab and Shift+Tab, Backspace, and {}+Up and Down to move a block.", keys::alt_key()),
             )
             .font(theme::font(theme::T_CAP))
             .color(p.text_faint),
@@ -115,13 +115,13 @@ impl App {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 if custom {
-                    let back = cmd.defaults(web).first().map(keys::text).unwrap_or_default();
+                    let back = cmd.defaults(web).first().map(keys::label).unwrap_or_default();
                     if ui::icon_button(ui, Icon::Refresh, &format!("Back to {back}"), 24.0) {
                         self.settings.keys.reset(cmd);
                         self.key_refusal = None;
                     }
                 }
-                let chords: Vec<String> = self.settings.keys.chords(cmd, web).iter().map(keys::text).collect();
+                let chords: Vec<String> = self.settings.keys.chords(cmd, web).iter().map(keys::label).collect();
                 let text = if listening { "Press keys…".to_string() } else { chords.join("  or  ") };
                 if keys::keycap(ui, &text, listening, custom) {
                     self.key_capture = if listening { None } else { Some(cmd) };

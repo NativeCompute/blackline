@@ -134,9 +134,9 @@ impl App {
             egui::TextEdit::singleline(&mut self.home_search)
                 .id(egui::Id::new("ns-home-search"))
                 .hint_text(if team.is_some() {
-                    "Search the team's scripts  ·  Ctrl+F"
+                    format!("Search the team's scripts  ·  {}+F", crate::keys::command_key())
                 } else {
-                    "Search titles and every line  ·  Ctrl+F"
+                    format!("Search titles and every line  ·  {}+F", crate::keys::command_key())
                 })
                 .desired_width(w.min(380.0))
                 .margin(egui::Margin::symmetric(12.0, 8.0)),
@@ -373,8 +373,32 @@ impl App {
             self.save_settings();
         }
         buttons.add_space(4.0);
-        if ui::button(&mut buttons, "Download", Some(Icon::External), true) {
+        let can_update = self.update_plan().is_some();
+        if can_update {
+            let now = ui::button_response(&mut buttons, "Update now", Some(Icon::Download), true, None)
+                .on_hover_text("Blackline closes, installs the new version and opens again. Your scripts stay where they are.");
+            if now.clicked() {
+                self.ask_update(&release.version);
+            }
+            buttons.add_space(4.0);
+        }
+        let download = ui::button_response(&mut buttons, "Download", Some(Icon::External), !can_update, None);
+        let download = if can_update || crate::WEB {
+            download
+        } else {
+            download.on_hover_text("This copy wasn't installed the standard way, so it can't update itself. Download the new version instead.")
+        };
+        if download.clicked() {
             self.store.open_url(&crate::update::releases_latest(crate::INFO.repo));
+        }
+        if ncf::OS.is_mac() && !can_update {
+            buttons.add_space(4.0);
+            let copy = ui::button_response(&mut buttons, "Copy update command", Some(Icon::Copy), false, None)
+                .on_hover_text("Paste it into Terminal: it installs the new version over this one and keeps your scripts.");
+            if copy.clicked() {
+                buttons.ctx().copy_text(crate::MAC_INSTALL.to_string());
+                self.deck.ok("Copied", "Paste it into Terminal and press Return.");
+            }
         }
         self.update_rect = rect;
         ui.add_space(14.0);

@@ -288,7 +288,7 @@ pub fn show(
         theme::mix(p.text_dim, p.text, hot),
         0.9,
     );
-    if resp.on_hover_text("A new scene at the end · Ctrl+Enter in the script").clicked() {
+    if resp.on_hover_text(format!("A new scene at the end · {}+Enter in the script", crate::keys::command_key())).clicked() {
         out.act = Some(Act::NewScene);
     }
 

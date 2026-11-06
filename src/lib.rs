@@ -20,6 +20,8 @@ pub mod people;
 pub mod report;
 pub mod revision;
 pub mod settings;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod smoke;
 pub mod splash;
 pub mod storage;
 pub mod theme;
@@ -44,5 +46,6 @@ pub const INFO: ncf::AppInfo = ncf::AppInfo {
 
 pub const NATIVECOMPUTE_URL: &str = ncf::NATIVECOMPUTE_URL;
 pub const YOUTRACK_INFO_URL: &str = "https://www.jetbrains.com/youtrack/";
+pub const MAC_INSTALL: &str = "curl -fsSL https://github.com/NativeCompute/blackline/releases/latest/download/install-macos.sh | bash";
 
 pub const WEB: bool = cfg!(target_arch = "wasm32");

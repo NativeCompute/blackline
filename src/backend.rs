@@ -269,7 +269,7 @@ mod local {
 
     #[derive(Default)]
     pub struct LocalBackend {
-        library_seen: Option<(SystemTime, Instant)>,
+        library_seen: Option<((SystemTime, usize), Instant)>,
         importing: Option<mpsc::Receiver<Result<Option<PathBuf>, String>>>,
         events: Vec<Event>,
     }
@@ -281,6 +281,13 @@ mod local {
         }
     }
 
+    fn library_signature() -> Option<(SystemTime, usize)> {
+        let dir = storage::scripts_dir();
+        let modified = std::fs::metadata(&dir).and_then(|m| m.modified()).ok()?;
+        let count = std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
+        Some((modified, count))
+    }
+
     impl Store for LocalBackend {
         fn location(&self) -> String {
             storage::scripts_dir().display().to_string()
@@ -288,8 +295,8 @@ mod local {
 
         fn list(&mut self) -> Vec<Entry> {
             let entries = storage::list_scripts();
-            if let Ok(m) = std::fs::metadata(storage::scripts_dir()).and_then(|m| m.modified()) {
-                self.library_seen = Some((m, Instant::now()));
+            if let Some(sig) = library_signature() {
+                self.library_seen = Some((sig, Instant::now()));
             }
             entries
         }
@@ -300,10 +307,9 @@ mod local {
                     return false;
                 }
             }
-            let now = std::fs::metadata(storage::scripts_dir()).and_then(|m| m.modified()).ok();
-            match (now, self.library_seen) {
-                (Some(m), Some((seen, _))) if m == seen => {
-                    self.library_seen = Some((m, Instant::now()));
+            match (library_signature(), self.library_seen) {
+                (Some(now), Some((seen, _))) if now == seen => {
+                    self.library_seen = Some((now, Instant::now()));
                     false
                 }
                 _ => true,
@@ -411,9 +417,13 @@ mod local {
 
         fn start_import(&mut self) {
             let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
+            if cfg!(target_os = "macos") {
                 let _ = tx.send(storage::pick_file_to_import());
-            });
+            } else {
+                std::thread::spawn(move || {
+                    let _ = tx.send(storage::pick_file_to_import());
+                });
+            }
             self.importing = Some(rx);
         }
 

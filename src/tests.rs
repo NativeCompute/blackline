@@ -520,7 +520,7 @@ fn a_library_from_before_the_rename_stays_where_it_is() {
     let home = std::env::temp_dir().join(format!("blackline-rename-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).unwrap();
-    let fresh = if cfg!(windows) { "Blackline" } else { "blackline" };
+    let fresh = if cfg!(windows) || cfg!(target_os = "macos") { "Blackline" } else { "blackline" };
     assert_eq!(storage::library_in(&home), home.join(fresh));
     std::fs::create_dir_all(home.join("northstar/scripts")).unwrap();
     assert_eq!(storage::library_in(&home), home.join("northstar"));
@@ -957,9 +957,10 @@ fn every_default_shortcut_reads_back_and_the_specific_chord_is_heard_first() {
     assert_eq!(keys::parse("Ctrl++"), Some(KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus)));
     assert_eq!(keys::parse("ctrl+shift+enter"), Some(KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter)));
     assert_eq!(keys::parse("Hyper+Q"), None);
-    assert_eq!(Keymap::default().label(Command::NewScript, true), "Ctrl+Alt+N");
-    assert_eq!(Keymap::default().label(Command::Element(3), true), "Alt+3");
-    assert_eq!(Keymap::default().label(Command::Element(3), false), "Ctrl+3");
+    let (cmd, alt) = (keys::command_key(), keys::alt_key());
+    assert_eq!(Keymap::default().label(Command::NewScript, true), format!("{cmd}+{alt}+N"));
+    assert_eq!(Keymap::default().label(Command::Element(3), true), format!("{alt}+3"));
+    assert_eq!(Keymap::default().label(Command::Element(3), false), format!("{cmd}+3"));
 }
 
 #[test]
@@ -982,7 +983,7 @@ fn a_chosen_shortcut_is_kept_only_while_it_differs_from_the_default() {
     let ctrl_s = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
     assert_eq!(km.taken_by(&ctrl_s, Command::Undo, &Command::ALL, false), Some(Command::Save));
     assert_eq!(km.taken_by(&ctrl_s, Command::Save, &Command::ALL, false), None);
-    let refuse = |m: Modifiers, k: Key, web: bool| keys::refused(&KeyboardShortcut::new(m, k), web);
+    let refuse = |m: Modifiers, k: Key, web: bool| keys::refused_for(&KeyboardShortcut::new(m, k), web, keys::Os::Linux);
     assert!(refuse(Modifiers::NONE, Key::Q, false).is_some(), "a plain key is for typing");
     assert!(refuse(Modifiers::SHIFT, Key::Enter, false).is_some());
     assert!(refuse(Modifiers::NONE, Key::F2, false).is_none(), "function keys are fine bare");
@@ -1621,3 +1622,81 @@ fn the_tour_goes_to_new_people_and_whats_new_to_people_updating() {
     assert!(crate::settings::Settings::default().fresh);
     assert!(s.serialize().contains("onboarded = \n") || s.serialize().contains("onboarded ="));
 }
+
+#[test]
+fn the_mac_defaults_never_clash_with_macos_or_type_characters() {
+    use crate::keys::{self, Command, Os};
+    for cmd in Command::ALL {
+        let mac = cmd.defaults_for(Os::Mac);
+        assert!(!mac.is_empty(), "{cmd:?} keeps a shortcut on a Mac");
+        for c in &mac {
+            assert_eq!(keys::refused_for(c, false, Os::Mac), None, "{cmd:?}: {}", keys::label_for(c, Os::Mac));
+            assert!(!(c.modifiers.alt && !c.modifiers.command), "{cmd:?} would type a character on a Mac");
+            let label = keys::label_for(c, Os::Mac);
+            assert!(!label.contains("Ctrl") && !label.contains("Alt"), "{label}");
+            assert!(label.is_ascii(), "{label} needs a glyph the bundled fonts lack");
+        }
+        for c in cmd.defaults_for(Os::Linux) {
+            assert!(!keys::label_for(&c, Os::Linux).contains("Cmd"));
+        }
+    }
+    let find = Command::Find.defaults_for(Os::Mac);
+    assert_eq!(keys::label_for(&find[1], Os::Mac), "Cmd+Option+F", "Cmd+H hides the app on a Mac");
+    assert_eq!(keys::label_for(&Command::Find.defaults_for(Os::Linux)[1], Os::Linux), "Ctrl+H", "unchanged elsewhere");
+    assert_eq!(Command::Element(2).defaults_for(Os::Mac).len(), 1);
+    assert_eq!(Command::Element(2).defaults_for(Os::Linux).len(), 2, "Linux keeps Alt+2");
+}
+
+#[test]
+fn a_settings_file_reads_and_writes_the_same_on_every_platform() {
+    use crate::settings::Settings;
+    let linux = "light_mode = no\nkey.details = Ctrl+Alt+D\nkey.find = Ctrl+Shift+H\n";
+    let s = Settings::parse(linux);
+    let out = s.serialize();
+    assert!(out.contains("key.details = Ctrl+Alt+D\n"), "{out}");
+    assert!(out.contains("key.find = Ctrl+Shift+H\n"), "{out}");
+    assert_eq!(Settings::parse(&out), s);
+    assert_eq!(Settings::parse("key.details = Cmd+Option+D\n").keys, Settings::parse("key.details = Ctrl+Alt+D\n").keys);
+}
+
+#[test]
+fn the_mac_install_command_fetches_the_latest_release_script() {
+    assert_eq!(
+        crate::MAC_INSTALL,
+        "curl -fsSL https://github.com/NativeCompute/blackline/releases/latest/download/install-macos.sh | bash"
+    );
+}
+
+#[test]
+fn the_mac_bundle_files_come_from_the_app_itself() {
+    let plist = crate::logo::info_plist();
+    assert!(plist.contains("<string>net.nativecompute.blackline</string>"));
+    assert!(plist.contains("<key>CFBundleExecutable</key>\n\t<string>blackline</string>"));
+    assert!(plist.contains(&format!("<string>{}</string>", env!("CARGO_PKG_VERSION"))));
+    assert!(plist.contains("<key>CFBundleIconFile</key>\n\t<string>Blackline</string>"));
+    assert!(plist.contains("<key>NSHighResolutionCapable</key>\n\t<true/>"));
+    let icns = crate::logo::icns();
+    assert_eq!(&icns[..4], b"icns");
+    assert_eq!(u32::from_be_bytes(icns[4..8].try_into().unwrap()) as usize, icns.len());
+}
+
+#[test]
+fn a_script_added_in_the_same_clock_tick_is_still_noticed() {
+    use crate::backend::{LocalBackend, Store};
+    let _g = sandbox("same-tick");
+    let dir = storage::scripts_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("first.md"), "---\ntitle: First\n---\n").unwrap();
+    let mut store = LocalBackend::default();
+    let before = store.list().len();
+    let stamp = std::fs::metadata(&dir).unwrap().modified().unwrap();
+    std::fs::write(dir.join("second.md"), "---\ntitle: Second\n---\n").unwrap();
+    std::fs::File::open(&dir).unwrap().set_modified(stamp).unwrap();
+    assert_eq!(std::fs::metadata(&dir).unwrap().modified().unwrap(), stamp, "the folder looks untouched by its time alone");
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    assert!(store.changed(), "a new script is noticed even when the folder's time didn't move");
+    assert_eq!(store.list().len(), before + 1);
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    assert!(!store.changed(), "and once seen, nothing more to report");
+}
+
