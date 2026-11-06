@@ -156,7 +156,7 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "blackline"
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -1532,8 +1532,8 @@ dependencies = [
 
 [[package]]
 name = "ncf"
-version = "0.3.0"
-source = "git+https://github.com/NativeCompute/ncf?rev=07efe54#07efe54a504dbac7df5d9970d9f10ac7ef20c300"
+version = "0.4.0"
+source = "git+https://github.com/NativeCompute/ncf?rev=3621e72#3621e72f41115f2d7c84b31f4f1b2966c1b6a903"
 dependencies = [
  "dirs",
  "eframe",
@@ -1548,8 +1548,8 @@ dependencies = [
 
 [[package]]
 name = "ncf-build"
-version = "0.3.0"
-source = "git+https://github.com/NativeCompute/ncf?rev=07efe54#07efe54a504dbac7df5d9970d9f10ac7ef20c300"
+version = "0.4.0"
+source = "git+https://github.com/NativeCompute/ncf?rev=3621e72#3621e72f41115f2d7c84b31f4f1b2966c1b6a903"
 dependencies = [
  "winresource",
 ]
