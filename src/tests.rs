@@ -1679,3 +1679,24 @@ fn the_mac_bundle_files_come_from_the_app_itself() {
     assert_eq!(&icns[..4], b"icns");
     assert_eq!(u32::from_be_bytes(icns[4..8].try_into().unwrap()) as usize, icns.len());
 }
+
+#[test]
+fn a_script_added_in_the_same_clock_tick_is_still_noticed() {
+    use crate::backend::{LocalBackend, Store};
+    let _g = sandbox("same-tick");
+    let dir = storage::scripts_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("first.md"), "---\ntitle: First\n---\n").unwrap();
+    let mut store = LocalBackend::default();
+    let before = store.list().len();
+    let stamp = std::fs::metadata(&dir).unwrap().modified().unwrap();
+    std::fs::write(dir.join("second.md"), "---\ntitle: Second\n---\n").unwrap();
+    std::fs::File::open(&dir).unwrap().set_modified(stamp).unwrap();
+    assert_eq!(std::fs::metadata(&dir).unwrap().modified().unwrap(), stamp, "the folder looks untouched by its time alone");
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    assert!(store.changed(), "a new script is noticed even when the folder's time didn't move");
+    assert_eq!(store.list().len(), before + 1);
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    assert!(!store.changed(), "and once seen, nothing more to report");
+}
+
