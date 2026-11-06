@@ -1700,3 +1700,37 @@ fn a_script_added_in_the_same_clock_tick_is_still_noticed() {
     assert!(!store.changed(), "and once seen, nothing more to report");
 }
 
+
+// youtrack here---
+
+#[test]
+fn a_script_keeps_its_own_youtrack_link_and_leaves_old_files_alone() {
+    let mut d = sample();
+    assert!(!storage::to_markdown(&d).contains("youtrack"), "nothing is written until a link is set");
+    d.meta.youtrack = "https://acme.youtrack.cloud/issue/BL-42".into();
+    let text = storage::to_markdown(&d);
+    assert!(text.contains("youtrack: https://acme.youtrack.cloud/issue/BL-42\n"));
+    assert_eq!(storage::from_markdown(&text).meta.youtrack, "https://acme.youtrack.cloud/issue/BL-42", "the colon in the link survives");
+    let back = storage::from_markdown(&text);
+    for printed in [export::to_fountain(&back), export::to_plain_text(&back)] {
+        assert!(!printed.contains("youtrack") && !printed.contains("BL-42"), "never printed or exported");
+    }
+}
+
+#[test]
+fn youtrack_ids_become_links_from_the_workspace() {
+    use crate::youtrack::{display, explain, script_link, target, workspace_root};
+    let ws = "https://acme.youtrack.cloud/issues?q=for:me";
+    assert_eq!(workspace_root(ws).as_deref(), Some("https://acme.youtrack.cloud"));
+    assert_eq!(workspace_root("https://yt.example.com/youtrack/").as_deref(), Some("https://yt.example.com/youtrack"));
+    assert_eq!(script_link("bl-42", ws).as_deref(), Some("https://acme.youtrack.cloud/issue/BL-42"));
+    assert_eq!(script_link("BL", ws).as_deref(), Some("https://acme.youtrack.cloud/projects/BL"));
+    assert_eq!(script_link("https://other.youtrack.cloud/issue/X-1", ws).as_deref(), Some("https://other.youtrack.cloud/issue/X-1"));
+    assert_eq!(script_link("BL-42", ""), None, "an ID needs the workspace");
+    assert_eq!(script_link("not a link", ws), None);
+    assert_eq!(target("", ws).as_deref(), Some(ws), "the workspace is the fallback");
+    assert_eq!(target("BL-7", ws).as_deref(), Some("https://acme.youtrack.cloud/issue/BL-7"), "the script's own link wins");
+    assert_eq!(target("", "not a link"), None);
+    assert!(explain("BL-42", "").is_some() && explain("hello world", ws).is_some() && explain("BL-42", ws).is_none());
+    assert_eq!(display("https://acme.youtrack.cloud/issue/BL-42"), "acme.youtrack.cloud/issue/BL-42");
+}

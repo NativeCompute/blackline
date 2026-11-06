@@ -510,6 +510,13 @@ there, paste your workspace's link into Settings → YouTrack and a **View on
 YouTrack** button appears at the foot of Home and of the notes panel. The link is empty until
 you set one, and the button stays hidden until then.
 
+Each script can also point at its own issue or project: open **Details** and
+fill in **YouTrack** with a full link, an issue ID like `BL-42` or a project
+key like `BL` (IDs and keys use the workspace link from Settings). The notes
+panel's button and **View on YouTrack** in the ⋯ menu then open that issue,
+and the workspace stays the fallback. The link is saved in the script file
+and never printed on the title page or in exports.
+
 ---
 
 ## Updates

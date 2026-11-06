@@ -187,6 +187,9 @@ pub fn to_markdown(doc: &Document) -> String {
     s.push_str(&format!("author: {}\n", esc(&doc.meta.author)));
     s.push_str(&format!("contact: {}\n", esc(&doc.meta.contact)));
     s.push_str(&format!("draft: {}\n", esc(&doc.meta.draft)));
+    if !doc.meta.youtrack.trim().is_empty() {
+        s.push_str(&format!("youtrack: {}\n", esc(&doc.meta.youtrack)));
+    }
     if doc.meta.starred {
         s.push_str("starred: yes\n");
     }
@@ -383,6 +386,7 @@ fn split_front_matter(text: &str) -> (Meta, &str) {
                 "author" => meta.author = v,
                 "contact" => meta.contact = v,
                 "draft" => meta.draft = v,
+                "youtrack" => meta.youtrack = v,
                 "starred" => meta.starred = matches!(v.as_str(), "yes" | "true" | "1"),
                 "voices" => meta.voices = parse_voices(&v),
                 "storylines" => meta.storylines = parse_storylines(&v),
