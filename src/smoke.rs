@@ -406,6 +406,84 @@ impl eframe::App for Smoke {
     }
 }
 
+pub struct UpdateSmoke {
+    app: App,
+    dir: PathBuf,
+    version: String,
+    frames: u32,
+    phase: u8,
+}
+
+impl UpdateSmoke {
+    pub fn new(app: App, dir: PathBuf, version: String) -> UpdateSmoke {
+        let dir = absolute(&dir);
+        let guard = dir.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(90));
+            let _ = std::fs::write(guard.join("report.txt"), "FAIL\nThe update smoke run did not hand over within 90 seconds.\n");
+            eprintln!("smoke: timed out");
+            std::process::exit(3);
+        });
+        note(format!("update to {version}"));
+        UpdateSmoke { app, dir, version, frames: 0, phase: 0 }
+    }
+}
+
+impl eframe::App for UpdateSmoke {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.app.update(ctx, frame);
+        ctx.request_repaint();
+        self.frames += 1;
+        if self.phase == 0 && self.frames >= 20 {
+            self.app.debug_skip_tour();
+            self.app.debug_open_from_home(library(&self.dir).join("scripts/crossfire.md"));
+            self.phase = 1;
+        } else if self.phase == 1 && self.frames >= 45 {
+            self.app.debug_append(UNSAVED);
+            if !self.app.is_dirty_now() {
+                note("FAIL the unsaved edit was not taken".into());
+            }
+            self.app.debug_offer_update(&self.version);
+            if self.app.debug_update_offered() {
+                note("ok Update now is offered for this copy".into());
+                self.app.debug_update_now(&self.version);
+            } else {
+                note("FAIL Update now is not offered for this copy".into());
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            self.phase = 2;
+        } else if self.phase == 2 && self.frames >= 400 {
+            note("FAIL the app did not close for the update".into());
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.phase = 3;
+        }
+    }
+
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        self.app.clear_color(visuals)
+    }
+
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        self.app.on_exit(gl);
+    }
+}
+
+pub fn finish_update(dir: &Path) -> i32 {
+    let dir = absolute(dir);
+    let mut lines = NOTES.lock().map(|n| n.clone()).unwrap_or_default();
+    let saved = std::fs::read_to_string(library(&dir).join("scripts/crossfire.md")).map(|t| t.contains(UNSAVED.trim())).unwrap_or(false);
+    lines.push(format!("{} the unsaved edit was saved before the app closed", if saved { "ok" } else { "FAIL" }));
+    let pass = !lines.iter().any(|l| l.starts_with("FAIL"));
+    let report = format!("{}\n{}\n", if pass { "PASS" } else { "FAIL" }, lines.join("\n"));
+    let _ = std::fs::write(dir.join("report.txt"), &report);
+    print!("{report}");
+    if pass {
+        0
+    } else {
+        1
+    }
+}
+
 pub fn finish(dir: &Path) -> i32 {
     let dir = absolute(dir);
     let lib = library(&dir);
