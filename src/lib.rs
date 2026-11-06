@@ -26,6 +26,7 @@ pub mod splash;
 pub mod storage;
 pub mod theme;
 pub mod ui;
+pub mod youtrack;
 
 pub use eframe;
 pub use ncf::{alerts, anim, caret, icons, update};
