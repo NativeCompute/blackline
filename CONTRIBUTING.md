@@ -35,7 +35,7 @@ On Linux, `./install.sh` builds and installs it for your user.
 2. **Tests come with the change.** Behaviour goes in `src/tests.rs`, anything
    you click in `src/uitests.rs` (a real `App`, driven headless), the shared
    library screens in `src/teamtests.rs`.
-3. **No new warnings.** CI runs clippy with `-D warnings` on Linux and Windows.
+3. **No new warnings.** CI runs clippy with `-D warnings` on Linux, macOS and Windows.
 4. **Linux, Windows and WebAssembly all build.** Code that only works on one
    goes behind `#[cfg(...)]`, and the others still build.
 5. **The design language is NativeCompute's.** Colours, type and controls come

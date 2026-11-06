@@ -5,6 +5,7 @@ on:
     tags: ["v*"]
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -35,10 +36,11 @@ jobs:
           cp target/release/blackline install.sh README.md LICENSE "$name/"
           cp packaging/blackline.desktop packaging/blackline.svg "$name/packaging/"
           tar -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: linux
-          path: blackline-*.tar.gz
+          path: blackline-*.tar.gz*
 
   windows:
     name: Windows build
@@ -56,14 +58,76 @@ jobs:
           New-Item -ItemType Directory -Path $name | Out-Null
           Copy-Item target/release/blackline.exe, README.md, LICENSE -Destination $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "$name.zip").Hash.ToLower()
+          "$hash  $name.zip" | Out-File -Encoding ascii -NoNewline "$name.zip.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: blackline-*.zip
+          path: blackline-*.zip*
+
+  macos:
+    name: macOS build (universal)
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --release
+      - name: Build, sign and zip Blackline.app
+        run: packaging/macos/bundle.sh --out dist
+      - name: Package
+        run: |
+          cd dist
+          name="blackline-${GITHUB_REF_NAME}-macos-universal.zip"
+          cp blackline-macos.zip "$name"
+          shasum -a 256 "$name" > "$name.sha256"
+          cp ../install-macos.sh .
+          shasum -a 256 -c blackline-macos.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/blackline-*.zip
+            dist/blackline-*.zip.sha256
+            dist/install-macos.sh
+
+  macos-intel:
+    name: macOS tests on Intel
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --release
+
+  macos-verify:
+    name: macOS ${{ matrix.os }} — install the release on a fresh Mac
+    needs: macos
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: dist
+      - name: Install, open, update and uninstall
+        timeout-minutes: 15
+        run: /bin/bash packaging/macos/verify-install.sh dist
 
   publish:
     name: GitHub Release
-    needs: [linux, windows]
+    needs: [linux, windows, macos, macos-intel, macos-verify]
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -75,4 +139,7 @@ jobs:
           files: |
             blackline-*.tar.gz
             blackline-*.zip
+            blackline-*.zip.sha256
+            blackline-*.tar.gz.sha256
+            install-macos.sh
           generate_release_notes: true

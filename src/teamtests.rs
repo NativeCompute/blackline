@@ -668,7 +668,7 @@ fn a_shortcut_of_your_own_is_kept_and_reset_puts_back_the_default() {
     assert!(t.app.debug_settings_open(), "nothing the chord would have done happened");
     t.press(Key::D, Modifiers::COMMAND | Modifiers::ALT);
     assert_eq!(t.app.debug_key_capture(), None);
-    assert_eq!(t.app.settings().keys.label(Command::ToggleDetails, false), "Ctrl+Alt+D");
+    assert_eq!(t.app.settings().keys.label(Command::ToggleDetails, false), format!("{}+{}+D", crate::keys::command_key(), crate::keys::alt_key()));
     let file = t.shared.borrow().settings.clone().unwrap_or_default();
     assert!(file.contains("key.details = Ctrl+Alt+D"), "kept with your settings: {file}");
 
@@ -686,7 +686,7 @@ fn a_shortcut_of_your_own_is_kept_and_reset_puts_back_the_default() {
     t.press(Key::Escape, Modifiers::NONE);
     assert_eq!(t.app.debug_key_capture(), None);
     assert!(t.app.debug_settings_open());
-    assert_eq!(t.app.settings().keys.label(Command::Save, false), "Ctrl+S");
+    assert_eq!(t.app.settings().keys.label(Command::Save, false), format!("{}+S", crate::keys::command_key()));
 
     t.app.settings_mut().keys.reset_all();
     t.frames(2);
