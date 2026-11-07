@@ -50,6 +50,7 @@ struct Room {
     cloud: FakeCloud,
     ann: Client,
     ben: Client,
+    org: String,
     team: String,
     personal: String,
     script: String,
@@ -59,13 +60,14 @@ fn room() -> Room {
     let cloud = FakeCloud::new();
     let ann = cloud.signed_in("ann@example.com", "Ann Lee");
     let ben = cloud.signed_in("ben@example.com", "Ben Ito");
-    let team = ann.create_workspace("Writers room").unwrap();
-    let invite = ann.invite_member(&team, "ben@example.com", nc::Role::Editor).unwrap();
+    let made = ann.create_org("Writers room").unwrap();
+    let (org, team) = (made.id, made.space);
+    let invite = ann.invite_member(&org, "ben@example.com", nc::OrgRole::Member, &[]).unwrap();
     ben.accept_invite(&invite).unwrap();
     let personal = ann.me().unwrap().personal_workspace;
     let body = storage::to_markdown(&doc("Harbour", "Waves."));
     let script = ann.create_project(&team, "blackline", "Harbour", &body, &serde_json::json!({"pages": 1})).unwrap().id;
-    Room { cloud, ann, ben, team, personal, script }
+    Room { cloud, ann, ben, org, team, personal, script }
 }
 
 fn opened(events: &[Event]) -> Option<(PathBuf, Document, Access)> {
@@ -98,21 +100,22 @@ fn spaces_and_team_scripts_come_down() {
     let spaces = s.spaces();
     assert_eq!(spaces.len(), 2);
     assert!(spaces[0].personal && spaces[0].name == "My cloud");
-    assert_eq!((spaces[1].name.as_str(), spaces[1].scripts), ("Writers room", 1));
+    assert_eq!((spaces[1].name.as_str(), spaces[1].scripts), ("Writers room / General", 1));
     assert!(s.list().iter().all(|e| e.cloud.is_none()));
     s.set_source(Source::Space(r.team.clone()));
     let list = s.list();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].title, "Harbour");
-    assert_eq!(list[0].cloud.as_deref(), Some("Writers room"));
+    assert_eq!(list[0].cloud.as_deref(), Some("Writers room / General"));
     assert!(list[0].path.exists(), "the cache copy is on disk");
     let team = s.team().unwrap();
-    assert_eq!(team.name, "Writers room");
-    assert_eq!(team.role, Role::Owner);
+    assert_eq!(team.name, "Writers room / General");
+    assert_eq!(team.role, Role::Editor);
     assert_eq!(team.members.len(), 2);
     assert!(team.members.iter().any(|m| m.person.name == "Ben Ito" && m.role == Role::Editor));
-    assert!(team.members.iter().any(|m| m.person.id == team.me.id && m.fixed));
-    assert_eq!(s.location(), "NativeCloud / Writers room");
+    assert!(team.members.iter().any(|m| m.person.id == team.me.id));
+    assert_eq!(s.location(), "NativeCloud / Writers room / General");
+    assert_eq!(s.web_path().as_deref(), Some("/o/writers-room/projects"));
     let found = s.search("waves").unwrap();
     assert_eq!(found.len(), 1);
     s.set_source(Source::Space(r.personal.clone()));
@@ -253,7 +256,7 @@ fn viewers_read_only() {
     let _g = sandbox("viewer");
     let r = room();
     let cal = r.cloud.signed_in("cal@example.com", "Cal Diaz");
-    let invite = r.ann.invite_member(&r.team, "cal@example.com", nc::Role::Viewer).unwrap();
+    let invite = r.ann.invite_guest(&r.org, "cal@example.com", std::slice::from_ref(&r.team), nc::Role::Viewer).unwrap();
     cal.accept_invite(&invite).unwrap();
     let mut c = store_for(&cal, "Cal's Mac");
     drain(&mut c);
@@ -407,8 +410,12 @@ fn the_app_shows_spaces_accounts_and_the_first_sync_picker() {
         run(&mut app, &ctx, 2);
     }
     let a = app.account().unwrap();
-    a.fill("ann@example.com", "Password123", "");
-    a.submit();
+    a.sign_in_with_browser(false);
+    let opened = a.take_urls();
+    assert!(opened.iter().any(|u| u.contains("/login?app=blackline&device=Ann%27s%20Mac&challenge=")), "{opened:?}");
+    let code = cloud.approve("ann@example.com", "blackline", "Ann's Mac", a.sign_in_challenge().unwrap());
+    a.set_code(&code);
+    a.submit_code();
     run(&mut app, &ctx, 6);
     assert!(app.debug_signed_in());
     assert!(app.debug_picker_open(), "the first-sync picker asks which scripts to move");

@@ -149,6 +149,8 @@ pub enum Source {
 pub struct Space {
     pub id: String,
     pub name: String,
+    pub org: Option<String>,
+    pub short: String,
     pub personal: bool,
     pub can_write: bool,
     pub scripts: usize,
@@ -289,6 +291,9 @@ pub trait Store {
         None
     }
     fn account_changed(&mut self, _signed_in: bool) {}
+    fn web_path(&self) -> Option<String> {
+        None
+    }
 }
 
 // desktop here---

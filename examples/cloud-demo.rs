@@ -37,11 +37,13 @@ fn main() -> eframe::Result<()> {
     let ann = cloud.signed_in("ann@example.com", "Ann Lee");
     let ben = cloud.signed_in("ben@example.com", "Ben Ito");
     let cal = cloud.signed_in("cal@example.com", "Cal Diaz");
-    let room = ann.create_workspace("Writers room").unwrap();
-    for (who, c, role) in [("ben@example.com", &ben, nc::Role::Editor), ("cal@example.com", &cal, nc::Role::Viewer)] {
-        let i = ann.invite_member(&room, who, role).unwrap();
-        c.accept_invite(&i).unwrap();
-    }
+    let made = ann.create_org("Writers room").unwrap();
+    let (org, room) = (made.id.clone(), made.space.clone());
+    let i = ann.invite_member(&org, "ben@example.com", nc::OrgRole::Admin, &[]).unwrap();
+    ben.accept_invite(&i).unwrap();
+    let i = ann.invite_guest(&org, "cal@example.com", std::slice::from_ref(&room), nc::Role::Viewer).unwrap();
+    cal.accept_invite(&i).unwrap();
+    let _ = ann.create_space(&org, "Pitches");
     let personal = ann.me().unwrap().personal_workspace;
     let harbour = script("Harbour", "Ann Lee & Ben Ito", &[
         ("EXT. HARBOUR - NIGHT", "Rain hammers the pier. A lone lamp swings.", "MARA", "They said the boat would wait."),
@@ -89,9 +91,9 @@ fn main() -> eframe::Result<()> {
             }
             match settings.as_str() {
                 "account" => app.debug_open_settings(9),
-                "teams" => {
+                "teams" | "orgs" => {
                     if let Some(a) = app.account() {
-                        a.select_team(Some(&room));
+                        a.select_org(Some(&org));
                     }
                     app.debug_open_settings(10);
                 }
