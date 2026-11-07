@@ -25,6 +25,11 @@ use crate::ui;
 
 mod home;
 mod team;
+#[cfg(not(target_arch = "wasm32"))]
+mod cloudui;
+#[cfg(target_arch = "wasm32")]
+#[path = "app/cloudui_web.rs"]
+mod cloudui;
 mod keyboard;
 mod notes;
 mod reports;
@@ -71,6 +76,8 @@ pub enum Ask {
     RenameScript,
     RestoreSnapshot(PathBuf),
     Update(String),
+    Cloud(String),
+    MakeLocal(PathBuf),
     Nothing,
 }
 
@@ -129,6 +136,10 @@ struct Find {
 
 pub struct App {
     store: Box<dyn Store>,
+    #[cfg(not(target_arch = "wasm32"))]
+    account: Option<ncf::cloud::Account>,
+    #[cfg(not(target_arch = "wasm32"))]
+    picker: Option<cloudui::Picker>,
     doc: Document,
     path: Option<PathBuf>,
     access: Access,
@@ -240,7 +251,30 @@ impl App {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn with_context(ctx: &egui::Context) -> Self {
+        let cfg = ncf::cloud::CloudConfig::nativecloud();
+        if cfg.is_set() {
+            let account = ncf::cloud::Account::new(crate::INFO, cfg, Some(ctx));
+            let device = account.device().clone();
+            let store = crate::cloud::CloudStore::new(account.client(), device, Some(ctx));
+            let mut app = App::with_store(ctx, Box::new(store));
+            app.attach_account(account);
+            return app;
+        }
         App::with_store(ctx, Box::new(crate::backend::LocalBackend::new()))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn attach_account(&mut self, mut account: ncf::cloud::Account) {
+        account.sync_settings = self.settings.cloud_sync;
+        if account.sync_settings && account.signed_in() {
+            account.pull_settings();
+        }
+        self.account = Some(account);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn account(&mut self) -> Option<&mut ncf::cloud::Account> {
+        self.account.as_mut()
     }
 
     pub fn with_store(ctx: &egui::Context, mut store: Box<dyn Store>) -> Self {
@@ -274,6 +308,10 @@ impl App {
 
         let mut app = App {
             store,
+            #[cfg(not(target_arch = "wasm32"))]
+            account: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            picker: None,
             baseline: doc.clone(),
             doc,
             path,
@@ -950,6 +988,7 @@ impl App {
         if let Err(e) = self.store.write_settings(&self.settings) {
             self.deck.say("Could not save settings", &e, Tone::Danger);
         }
+        self.push_settings();
     }
 
     fn answer(&mut self, a: alerts::Answer<Ask>) {
@@ -983,6 +1022,8 @@ impl App {
             }
             Ask::RestoreSnapshot(p) => self.restore_snapshot(&p),
             Ask::Update(version) => self.start_update(&version),
+            Ask::Cloud(action) => self.answer_cloud(&action),
+            Ask::MakeLocal(path) => self.make_local(&path),
             Ask::Nothing => {}
         }
     }
@@ -1442,9 +1483,10 @@ impl App {
             return;
         };
         let starred = self.entries.iter().find(|e| e.path == path).map(|e| e.starred).unwrap_or(false);
-        let team = self.store.team().is_some();
+        let team = self.store.team().is_some() || self.store.place(&path).is_some();
         let write = self.can_write();
         let mut close = false;
+        let mut moving = None;
         let area = egui::Area::new(egui::Id::new("ns-row-menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(at)
@@ -1479,6 +1521,12 @@ impl App {
                         close = true;
                     }
                     if write {
+                        if let Some(m) = self.move_items(ui, &mut rects, &path) {
+                            moving = Some(m);
+                            close = true;
+                        }
+                    }
+                    if write {
                         ui::separator(ui);
                         if ui::menu_item(ui, &mut rects, "Delete script", Icon::Trash, true) {
                             self.ask_delete(path.clone());
@@ -1494,6 +1542,9 @@ impl App {
             || ctx.input(|i| i.key_pressed(egui::Key::Escape))
         {
             self.rail.menu = None;
+        }
+        if let Some(m) = moving {
+            self.do_move(&path, m);
         }
     }
 
@@ -2554,6 +2605,7 @@ impl App {
             None => {}
         }
         self.row_menu(ctx);
+        self.first_sync_picker(ctx);
     }
 
     fn more_menu(&mut self, ctx: &egui::Context) {
@@ -3102,7 +3154,10 @@ impl App {
             ("About", Icon::Info, 6),
         ];
         tabs.insert(5, ("Keyboard", Icon::Keyboard, KEYS_TAB));
-        if self.store.team().is_some() {
+        if self.cloud_on() {
+            tabs.insert(1, ("Account", Icon::Cloud, cloudui::ACCOUNT_TAB));
+            tabs.insert(2, ("Organizations", Icon::Users, cloudui::TEAMS_TAB));
+        } else if self.store.team().is_some() {
             tabs.push(("Team", Icon::Users, TEAM_TAB));
         }
         let tabs = tabs;
@@ -3514,6 +3569,7 @@ impl App {
             }
             TEAM_TAB => self.team_settings(ui),
             KEYS_TAB => self.keyboard_settings(ui),
+            cloudui::ACCOUNT_TAB | cloudui::TEAMS_TAB => self.account_body(ui, tab),
             6 => {
             ui::section(ui, "Where things live");
             ui.label(
@@ -3978,6 +4034,7 @@ impl App {
         for event in self.store.events() {
             self.on_event(event);
         }
+        self.cloud_frame();
         if self.store.busy() {
             ctx.request_repaint_after(Duration::from_millis(200));
         }

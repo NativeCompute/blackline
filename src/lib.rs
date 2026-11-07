@@ -4,11 +4,15 @@ mod tests;
 mod teamtests;
 #[cfg(test)]
 mod uitests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod cloudtests;
 
 pub mod app;
 pub mod backend;
 pub mod cards;
 pub mod chrome;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cloud;
 pub mod editor;
 pub mod export;
 pub mod fountain;

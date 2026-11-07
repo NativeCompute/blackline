@@ -127,6 +127,7 @@ impl App {
             });
         });
         ui.add_space(14.0);
+        self.sources_bar(ui, w);
 
         // search here---
         let search = ui.add(
@@ -466,6 +467,18 @@ impl App {
             p.text_faint,
             0.8,
         );
+        if e.cloud.is_some() {
+            let col = if e.waiting { p.warn } else { p.text_faint };
+            let right = rect.right() - pad;
+            if e.waiting {
+                let label = "WAITING TO SYNC";
+                let tw = theme::tracked_width(ui.ctx(), label, theme::font_hud(theme::T_MICRO), 0.8);
+                theme::tracked_text(ui.painter(), Pos2::new(right - tw, rect.top() + 68.0), label, theme::font_hud(theme::T_MICRO), col, 0.8);
+                icons::draw(ui.painter(), Rect::from_center_size(Pos2::new(right - tw - 10.0, rect.top() + 68.0), Vec2::splat(11.0)), Icon::Cloud, col);
+            } else {
+                icons::draw(ui.painter(), Rect::from_center_size(Pos2::new(right - 6.0, rect.top() + 68.0), Vec2::splat(12.0)), Icon::Cloud, col);
+            }
+        }
 
         let foot_y = rect.bottom() - 24.0;
         let me = self.me();

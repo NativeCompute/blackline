@@ -139,6 +139,30 @@ impl Access {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    Local,
+    Space(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Space {
+    pub id: String,
+    pub name: String,
+    pub org: Option<String>,
+    pub short: String,
+    pub personal: bool,
+    pub can_write: bool,
+    pub scripts: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Sync {
+    pub text: String,
+    pub warn: bool,
+    pub busy: bool,
+}
+
 #[derive(Debug)]
 pub enum Load {
     Ready(Box<Document>, Access),
@@ -246,6 +270,29 @@ pub trait Store {
     fn events(&mut self) -> Vec<Event>;
     fn busy(&self) -> bool {
         false
+    }
+
+    // cloud here---
+
+    fn spaces(&self) -> Vec<Space> {
+        Vec::new()
+    }
+    fn source(&self) -> Source {
+        Source::Local
+    }
+    fn set_source(&mut self, _source: Source) {}
+    fn place(&self, _key: &Path) -> Option<String> {
+        None
+    }
+    fn move_to(&mut self, _key: &Path, _space: Option<&str>) -> Result<PathBuf, String> {
+        Err("NativeCloud isn't on in this build.".into())
+    }
+    fn sync(&self) -> Option<Sync> {
+        None
+    }
+    fn account_changed(&mut self, _signed_in: bool) {}
+    fn web_path(&self) -> Option<String> {
+        None
     }
 }
 
