@@ -473,6 +473,21 @@ too, so nothing is ever lost.
 
 ---
 
+## NativeCloud (beta)
+
+NativeCloud is the NativeCompute account that keeps scripts in the cloud, syncs them between your computers and lets a team write together. It is off until a build ships with a NativeCloud address, and nothing changes for you until you sign in.
+
+- **Sign in** under Settings → *Account*. An account is confirmed with a 6-digit code from your email. The same tab covers your profile, your computers, *Sync my settings*, exporting everything and deleting the account. Teams and invites live under Settings → *Teams*.
+- **Choose what syncs.** When you first sign in, a list of the scripts on this computer asks which should move to *My cloud*. None are ticked, so nothing leaves the computer unless you choose it.
+- **Sources.** The library has a switcher: *On this computer*, *My cloud* and each of your teams. A new script goes wherever you're looking.
+- **Moving scripts.** A script's `⋯` menu moves it to NativeCloud, to *My cloud* or to a team, or makes it local only. Making it local asks first, and the cloud keeps the script in Recently deleted for 30 days. When a script moves up, a copy of the original stays on the computer.
+- **One writer at a time.** Opening a team script takes the edit lock. Anyone else reads it live, sees *Ben is editing · read only*, and gets *Edit now* when the lock frees up.
+- **Offline.** Every cloud script is also a file on this computer, so you can keep writing offline; the edits go up when you're back. If someone changed the script meanwhile, their version stays and yours is kept as a snapshot, under `⋯` → *Snapshots…*.
+
+To try it without a server, `cargo run --example cloud-demo` opens Blackline against an in-memory NativeCloud with a team, three people and a few scripts. It uses a throwaway data folder and doesn't touch your library. Options: `--home team`, `--open locked`, `--settings account`, `--settings teams`, `--light`.
+
+---
+
 ## Settings
 
 Settings (`Ctrl+,`, or the sliders in the ribbon) open as a window of their

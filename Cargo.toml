@@ -10,7 +10,7 @@ homepage = "https://nativecompute.net"
 repository = "https://github.com/NativeCompute/blackline"
 
 [dependencies]
-ncf = { git = "https://github.com/NativeCompute/ncf", tag = "v0.4.0" }
+ncf = { git = "https://github.com/NativeCompute/ncf", branch = "nativecloud" }
 eframe = { version = "0.29", default-features = false, features = [
     "glow",
     "default_fonts",
@@ -32,6 +32,7 @@ eframe = { version = "0.29", default-features = false, features = ["wgpu"] }
 wgpu = { version = "22.1", default-features = false, features = ["metal"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ncf = { git = "https://github.com/NativeCompute/ncf", branch = "nativecloud", features = ["cloud"] }
 ureq = "2.10"
 png = "0.18"
 log = "0.4"
@@ -39,8 +40,11 @@ log = "0.4"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "wasmbind"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+ncf = { git = "https://github.com/NativeCompute/ncf", branch = "nativecloud", features = ["cloud", "testing"] }
+
 [build-dependencies]
-ncf-build = { git = "https://github.com/NativeCompute/ncf", tag = "v0.4.0" }
+ncf-build = { git = "https://github.com/NativeCompute/ncf", branch = "nativecloud" }
 
 [profile.release]
 opt-level = 3

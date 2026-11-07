@@ -106,6 +106,8 @@ pub struct Settings {
     pub pdf_notes: bool,
     pub keys: crate::keys::Keymap,
     pub debug: bool,
+    pub cloud_sync: bool,
+    pub cloud_asked: bool,
 }
 
 pub const DEFAULT_YOUTRACK: &str = "";
@@ -149,6 +151,8 @@ impl Default for Settings {
             pdf_notes: false,
             keys: crate::keys::Keymap::default(),
             debug: false,
+            cloud_sync: false,
+            cloud_asked: false,
         }
     }
 }
@@ -228,6 +232,8 @@ impl Settings {
             ""
         } + &self.keys.serialize()
             + if self.debug { "debug = yes\n" } else { "" }
+            + if self.cloud_sync { "cloud_sync_settings = yes\n" } else { "" }
+            + if self.cloud_asked { "cloud_asked = yes\n" } else { "" }
     }
 
     pub fn parse(text: &str) -> Settings {
@@ -285,6 +291,8 @@ impl Settings {
                 "pdf_notes" => s.pdf_notes = yes(v),
                 "check_updates" => s.check_updates = yes(v),
                 "debug" => s.debug = yes(v),
+                "cloud_sync_settings" => s.cloud_sync = yes(v),
+                "cloud_asked" => s.cloud_asked = yes(v),
                 "youtrack_url" => {
                     s.youtrack_url = v.to_string()
                 }
