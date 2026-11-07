@@ -17,7 +17,7 @@ pub const APP: &str = "blackline";
 pub struct All {
     me: nc::Me,
     projects: Vec<nc::Project>,
-    teams: Vec<nc::Team>,
+    spaces: Vec<nc::Space>,
     leases: Vec<(String, nc::Lease)>,
     stars: Vec<String>,
 }
@@ -48,6 +48,7 @@ pub struct CloudStore {
     root: PathBuf,
     index: HashMap<String, Known>,
     spaces: Vec<SpaceRow>,
+    orgs: HashMap<String, (String, String)>,
     projects: Vec<nc::Project>,
     leases: HashMap<String, nc::Lease>,
     stars: HashSet<String>,
@@ -72,7 +73,7 @@ fn person(p: &nc::Person) -> Person {
 
 fn role(r: nc::Role) -> Role {
     match r {
-        nc::Role::Owner | nc::Role::Admin => Role::Owner,
+        nc::Role::Owner => Role::Owner,
         nc::Role::Editor => Role::Editor,
         nc::Role::Viewer => Role::Viewer,
     }
@@ -112,6 +113,7 @@ impl CloudStore {
             root,
             index: HashMap::new(),
             spaces: Vec::new(),
+            orgs: HashMap::new(),
             projects: Vec::new(),
             leases: HashMap::new(),
             stars: HashSet::new(),
@@ -184,6 +186,10 @@ impl CloudStore {
                 let ws: nc::Workspace = serde_json::from_value(w.get("workspace").cloned().unwrap_or(Value::Null)).unwrap_or_default();
                 let r = nc::Role::parse(w.get("role").and_then(Value::as_str).unwrap_or("")).unwrap_or_default();
                 if !ws.id.is_empty() {
+                    if let (Some(o), Some(org)) = (&ws.org_id, w.get("org")) {
+                        let text = |k: &str| org.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                        self.orgs.insert(o.clone(), (text("name"), text("slug")));
+                    }
                     self.spaces.push((ws, r, Vec::new()));
                 }
             }
@@ -202,7 +208,11 @@ impl CloudStore {
         let spaces: Vec<Value> = self
             .spaces
             .iter()
-            .map(|(w, r, _)| json!({"workspace": {"id": w.id, "name": w.name, "kind": w.kind, "owner_id": w.owner_id}, "role": r.as_str()}))
+            .map(|(w, r, _)| {
+                let org = w.org_id.as_ref().and_then(|o| self.orgs.get(o));
+                json!({"workspace": {"id": w.id, "name": w.name, "kind": w.kind, "owner_id": w.owner_id, "org_id": w.org_id}, "role": r.as_str(),
+                       "org": org.map(|(n, s)| json!({"name": n, "slug": s}))})
+            })
             .collect();
         let source = match &self.source {
             Source::Space(id) => Value::String(id.clone()),
@@ -228,8 +238,27 @@ impl CloudStore {
 
     // spaces here---
 
+    fn shown(&self, w: &nc::Workspace) -> String {
+        match w.org_id.as_ref().and_then(|o| self.orgs.get(o)) {
+            Some((org, _)) if !w.is_personal() => format!("{org} / {}", w.name),
+            _ => w.shown(),
+        }
+    }
+
+    fn sort_spaces(&mut self) {
+        let orgs = self.orgs.clone();
+        self.spaces.sort_by_key(|(w, _, _)| {
+            let org = w.org_id.as_ref().and_then(|o| orgs.get(o)).map(|(n, _)| n.to_lowercase()).unwrap_or_default();
+            (!w.is_personal(), org, w.name.to_lowercase())
+        });
+    }
+
+    fn org_of(&self, ws: &str) -> Option<String> {
+        self.spaces.iter().find(|(w, _, _)| w.id == ws).and_then(|(w, _, _)| w.org_id.clone())
+    }
+
     fn space_name(&self, id: &str) -> String {
-        self.spaces.iter().find(|(w, _, _)| w.id == id).map(|(w, _, _)| w.shown()).unwrap_or_else(|| "NativeCloud".into())
+        self.spaces.iter().find(|(w, _, _)| w.id == id).map(|(w, _, _)| self.shown(w)).unwrap_or_else(|| "NativeCloud".into())
     }
 
     fn space_role(&self, id: &str) -> Option<nc::Role> {
@@ -256,13 +285,14 @@ impl CloudStore {
             .iter()
             .map(|(m, p)| Member { person: person(p), role: role(m.role), pending: false, fixed: m.role == nc::Role::Owner })
             .collect();
-        self.team = Some(Team { name: w.name.clone(), me, role: role(*r), members });
+        let name = self.shown(w);
+        self.team = Some(Team { name, me, role: role(*r), members });
     }
 
     pub fn refresh(&mut self) {
         self.engine.run(|c| {
             let all = || -> Result<Box<All>, CloudError> {
-                Ok(Box::new(All { me: c.me()?, projects: c.projects(APP)?, teams: c.teams()?, leases: c.leases()?, stars: c.stars()? }))
+                Ok(Box::new(All { me: c.me()?, projects: c.projects(APP)?, spaces: c.spaces()?, leases: c.leases()?, stars: c.stars()? }))
             };
             Reply::All(all())
         });
@@ -331,10 +361,11 @@ impl CloudStore {
     fn handle(&mut self, r: Reply) {
         match r {
             Reply::All(Ok(all)) => {
-                let All { me, projects, teams, leases, stars } = *all;
+                let All { me, projects, spaces, leases, stars } = *all;
+                self.orgs = me.orgs.iter().map(|o| (o.id.clone(), (o.name.clone(), o.slug.clone()))).collect();
                 self.me = Some(me);
-                self.spaces = teams.into_iter().map(|t| (t.workspace, t.my_role, t.members)).collect();
-                self.spaces.sort_by_key(|(w, _, _)| (!w.is_personal(), w.name.to_lowercase()));
+                self.spaces = spaces.into_iter().map(|s| (s.workspace, s.my_role, s.members)).collect();
+                self.sort_spaces();
                 if let Source::Space(id) = &self.source {
                     if !self.spaces.iter().any(|(w, _, _)| &w.id == id) {
                         self.source = Source::Local;
@@ -886,22 +917,28 @@ impl Store for CloudStore {
         let Source::Space(ws) = self.source.clone() else {
             return;
         };
-        let (email, r) = (email.to_string(), if r == Role::Viewer { nc::Role::Viewer } else { nc::Role::Editor });
-        self.engine.run(move |c| Reply::Done("invited", c.invite_member(&ws, &email, r).map(|id| {
-            let _ = c.send_invite(&id, APP);
-        })));
+        let Some(org) = self.org_of(&ws) else {
+            return;
+        };
+        let email = email.to_string();
+        self.engine.run(move |c| {
+            let made = match r {
+                Role::Viewer => c.invite_guest(&org, &email, std::slice::from_ref(&ws), nc::Role::Viewer),
+                Role::Editor => c.invite_member(&org, &email, nc::OrgRole::Member, &[]),
+                Role::Owner => c.invite_member(&org, &email, nc::OrgRole::Admin, &[]),
+            };
+            Reply::Done("invited", made.map(|id| {
+                let _ = c.send_invite(&id);
+            }))
+        });
     }
 
     fn set_role(&mut self, member: &str, r: Role) {
         let Source::Space(ws) = self.source.clone() else {
             return;
         };
-        let (member, r) = (member.to_string(), match r {
-            Role::Owner => nc::Role::Admin,
-            Role::Editor => nc::Role::Editor,
-            Role::Viewer => nc::Role::Viewer,
-        });
-        self.engine.run(move |c| Reply::Done("role", c.set_role(&ws, &member, r)));
+        let (member, r) = (member.to_string(), if r == Role::Viewer { "viewer" } else { "editor" });
+        self.engine.run(move |c| Reply::Done("role", c.rpc("set_space_member", json!({"ws": ws, "member": member, "role": r})).map(|_| ())));
     }
 
     fn remove_member(&mut self, member: &str) {
@@ -909,7 +946,18 @@ impl Store for CloudStore {
             return;
         };
         let member = member.to_string();
-        self.engine.run(move |c| Reply::Done("removed", c.remove_member(&ws, &member)));
+        self.engine.run(move |c| Reply::Done("removed", c.rpc("set_space_member", json!({"ws": ws, "member": member, "role": null})).map(|_| ())));
+    }
+
+    fn web_path(&self) -> Option<String> {
+        let Source::Space(ws) = &self.source else {
+            return None;
+        };
+        let (w, _, _) = self.spaces.iter().find(|(w, _, _)| &w.id == ws)?;
+        match w.org_id.as_ref().and_then(|o| self.orgs.get(o)) {
+            Some((_, slug)) if !slug.is_empty() => Some(format!("/o/{slug}/projects")),
+            _ => Some("/me".into()),
+        }
     }
 
     fn sign_out(&mut self) {
@@ -970,7 +1018,9 @@ impl Store for CloudStore {
             .iter()
             .map(|(w, r, _)| Space {
                 id: w.id.clone(),
-                name: w.shown(),
+                name: self.shown(w),
+                org: w.org_id.as_ref().and_then(|o| self.orgs.get(o)).map(|(n, _)| n.clone()),
+                short: w.shown(),
                 personal: w.is_personal(),
                 can_write: r.can_write(),
                 scripts: if self.loaded {

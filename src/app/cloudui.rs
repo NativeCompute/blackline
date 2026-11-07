@@ -108,7 +108,7 @@ impl App {
         }
         for u in urls {
             match u.strip_prefix("ncf:settings:") {
-                Some("Teams") => self.open_settings_tab(TEAMS_TAB),
+                Some("Organizations") => self.open_settings_tab(TEAMS_TAB),
                 Some(_) => self.open_settings_tab(ACCOUNT_TAB),
                 None => self.store.open_url(&u),
             }
@@ -379,23 +379,36 @@ impl App {
             Icon::Folder,
             Source::Local,
         )];
+        let orgs: std::collections::BTreeSet<&str> = spaces.iter().filter_map(|s| s.org.as_deref()).collect();
         for s in &spaces {
-            labels.push((format!("{} · {}", s.name, s.scripts), if s.personal { Icon::Cloud } else { Icon::Users }, Source::Space(s.id.clone())));
+            let name = if orgs.len() > 1 { &s.name } else { &s.short };
+            labels.push((format!("{name} · {}", s.scripts), if s.personal { Icon::Cloud } else { Icon::Users }, Source::Space(s.id.clone())));
         }
         let current = labels.iter().position(|l| l.2 == source).unwrap_or(0);
-        ui.horizontal(|ui| {
-            let room = (w - 190.0).max(200.0);
-            let opts: Vec<(&str, Icon)> = labels.iter().map(|(l, i, _)| (l.as_str(), *i)).collect();
-            ui.allocate_ui_with_layout(Vec2::new(room, 30.0), Layout::left_to_right(Align::Center), |ui| {
-                if let Some(k) = ui::segmented(ui, &opts, current) {
-                    if k != current {
-                        self.store.set_source(labels[k].2.clone());
-                        self.home_sel = 0;
-                        self.refresh_entries();
-                    }
+        let opts: Vec<(&str, Icon)> = labels.iter().map(|(l, i, _)| (l.as_str(), *i)).collect();
+        ui.allocate_ui_with_layout(Vec2::new(w, 30.0), Layout::left_to_right(Align::Center), |ui| {
+            if let Some(k) = ui::segmented(ui, &opts, current) {
+                if k != current {
+                    self.store.set_source(labels[k].2.clone());
+                    self.home_sel = 0;
+                    self.refresh_entries();
                 }
-            });
+            }
+        });
+        ui.add_space(4.0);
+        ui.allocate_ui_with_layout(Vec2::new(w, 22.0), Layout::left_to_right(Align::Center), |ui| {
+            if let Some(org) = spaces.iter().find(|s| Source::Space(s.id.clone()) == source).and_then(|s| s.org.clone()).filter(|_| orgs.len() <= 1) {
+                ui::hud(ui, &org, None);
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if let Some(path) = self.store.web_path() {
+                    if ui::link(ui, "Manage on the web") {
+                        if let Some(a) = self.account.as_mut() {
+                            a.open_on_web(&path);
+                        }
+                    }
+                    ui.add_space(12.0);
+                }
                 if let Some(s) = self.store.sync() {
                     let p = pal();
                     let col = if s.warn {
@@ -438,7 +451,7 @@ impl App {
         if tab == ACCOUNT_TAB {
             a.account_ui(ui);
         } else {
-            a.teams_ui(ui);
+            a.orgs_ui(ui);
         }
     }
 }

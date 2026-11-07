@@ -477,14 +477,16 @@ too, so nothing is ever lost.
 
 NativeCloud is the NativeCompute account that keeps scripts in the cloud, syncs them between your computers and lets a team write together. It is off until a build ships with a NativeCloud address, and nothing changes for you until you sign in.
 
-- **Sign in** under Settings → *Account*. An account is confirmed with a 6-digit code from your email. The same tab covers your profile, your computers, *Sync my settings*, exporting everything and deleting the account. Teams and invites live under Settings → *Teams*.
+- **Sign in with your browser** under Settings → *Account*. Blackline opens cloud.nativecompute.net, you sign in or create your account there, confirm *Sign in to Blackline on this computer?*, and the browser hands you straight back, signed in. Blackline never asks for your password. If the browser can't reach Blackline, the page shows an 8-character code to type in instead.
+- **Your account lives on the web.** Profile, email and password, your computers, exporting everything and deleting the account are all at cloud.nativecompute.net; *Manage account on the web* opens it already signed in. Blackline keeps *Sync my settings* and *Sign out*.
+- **Organizations.** A team is an organization with spaces inside it, one per show or season. Settings → *Organizations* lists yours with their spaces and people, takes a quick invite, and opens the organization on the web for everything else: roles, removals, guests, plans and settings. Invites for you show up in both tabs with *Join* and *Decline*.
 - **Choose what syncs.** When you first sign in, a list of the scripts on this computer asks which should move to *My cloud*. None are ticked, so nothing leaves the computer unless you choose it.
-- **Sources.** The library has a switcher: *On this computer*, *My cloud* and each of your teams. A new script goes wherever you're looking.
-- **Moving scripts.** A script's `⋯` menu moves it to NativeCloud, to *My cloud* or to a team, or makes it local only. Making it local asks first, and the cloud keeps the script in Recently deleted for 30 days. When a script moves up, a copy of the original stays on the computer.
-- **One writer at a time.** Opening a team script takes the edit lock. Anyone else reads it live, sees *Ben is editing · read only*, and gets *Edit now* when the lock frees up.
+- **Sources.** The library has a switcher: *On this computer*, *My cloud* and each space you're in, grouped under its organization. A new script goes wherever you're looking. *Manage on the web* beside it opens that space's scripts in the browser, with their history.
+- **Moving scripts.** A script's `⋯` menu moves it to NativeCloud, to *My cloud* or to another space, or makes it local only. Making it local asks first, and the cloud keeps the script in Recently deleted for 30 days. When a script moves up, a copy of the original stays on the computer.
+- **One writer at a time.** Opening a shared script takes the edit lock. Anyone else reads it live, sees *Ben is editing · read only*, and gets *Edit now* when the lock frees up. Guests who can only read a space always open its scripts read only.
 - **Offline.** Every cloud script is also a file on this computer, so you can keep writing offline; the edits go up when you're back. If someone changed the script meanwhile, their version stays and yours is kept as a snapshot, under `⋯` → *Snapshots…*.
 
-To try it without a server, `cargo run --example cloud-demo` opens Blackline against an in-memory NativeCloud with a team, three people and a few scripts. It uses a throwaway data folder and doesn't touch your library. Options: `--home team`, `--open locked`, `--settings account`, `--settings teams`, `--light`.
+To try it without a server, `cargo run --example cloud-demo` opens Blackline against an in-memory NativeCloud with an organization, two spaces, three people and a few scripts. It uses a throwaway data folder and doesn't touch your library. Options: `--home team`, `--open locked`, `--settings account`, `--settings orgs`, `--light`.
 
 ---
 

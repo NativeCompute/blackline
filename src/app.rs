@@ -3156,7 +3156,7 @@ impl App {
         tabs.insert(5, ("Keyboard", Icon::Keyboard, KEYS_TAB));
         if self.cloud_on() {
             tabs.insert(1, ("Account", Icon::Cloud, cloudui::ACCOUNT_TAB));
-            tabs.insert(2, ("Teams", Icon::Users, cloudui::TEAMS_TAB));
+            tabs.insert(2, ("Organizations", Icon::Users, cloudui::TEAMS_TAB));
         } else if self.store.team().is_some() {
             tabs.push(("Team", Icon::Users, TEAM_TAB));
         }
