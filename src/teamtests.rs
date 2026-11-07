@@ -65,6 +65,7 @@ impl Store for Memory {
                 edited_by: Some(alex()),
                 editing: None,
                 author: d.meta.author.clone(),
+                ..Default::default()
             })
             .collect()
     }

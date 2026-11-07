@@ -20,6 +20,7 @@ impl App {
 
     pub(super) fn title_extras(&mut self, ui: &mut egui::Ui) {
         self.debug.tag(ui);
+        self.cloud_title(ui);
         let Some((me, role, team_name)) = self
             .store
             .team()
@@ -97,7 +98,7 @@ impl App {
                         self.popover_frame = self.frame_no;
                     }
                     if ui::menu_item(ui, &mut rects, "The team", Icon::Users, false) {
-                        self.settings_tab = super::TEAM_TAB;
+                        self.settings_tab = if self.cloud_on() { super::cloudui::TEAMS_TAB } else { super::TEAM_TAB };
                         self.popover = Some(Popover::Settings);
                         self.popover_frame = self.frame_no;
                     }

@@ -82,6 +82,27 @@ pub struct Entry {
     pub edited_by: Option<Person>,
     pub editing: Option<Person>,
     pub author: String,
+    pub cloud: Option<String>,
+    pub waiting: bool,
+}
+
+impl Default for Entry {
+    fn default() -> Entry {
+        Entry {
+            path: PathBuf::new(),
+            title: String::new(),
+            modified: SystemTime::UNIX_EPOCH,
+            preview: String::new(),
+            starred: false,
+            pages: 0,
+            scenes: 0,
+            edited_by: None,
+            editing: None,
+            author: String::new(),
+            cloud: None,
+            waiting: false,
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -100,40 +121,44 @@ pub fn list_scripts() -> Vec<Entry> {
             .and_then(|m| m.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let text = fs::read_to_string(&path).unwrap_or_default();
-        let (meta, body) = split_front_matter(&text);
-        let title = if meta.title.trim().is_empty() {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("untitled")
-                .to_string()
-        } else {
-            meta.title.clone()
-        };
-        let preview = body
-            .lines()
-            .map(|l| l.trim())
-            .find(|l| !l.is_empty() && !l.starts_with("<!--"))
-            .unwrap_or("")
-            .trim_start_matches(['#', '*', '>', '`', ' '])
-            .chars()
-            .take(70)
-            .collect::<String>();
-        let doc = from_markdown(&text);
-        out.push(Entry {
-            path,
-            title,
-            modified,
-            preview,
-            starred: meta.starred,
-            pages: export::page_count(&doc),
-            scenes: doc.scene_count(),
-            edited_by: None,
-            editing: None,
-            author: meta.author.clone(),
-        });
+        out.push(entry_from_text(path, &text, modified));
     }
     out.sort_by_key(|a| std::cmp::Reverse(a.modified));
     out
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn entry_from_text(path: PathBuf, text: &str, modified: SystemTime) -> Entry {
+    let (meta, body) = split_front_matter(text);
+    let title = if meta.title.trim().is_empty() {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("untitled")
+            .to_string()
+    } else {
+        meta.title.clone()
+    };
+    let preview = body
+        .lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty() && !l.starts_with("<!--"))
+        .unwrap_or("")
+        .trim_start_matches(['#', '*', '>', '`', ' '])
+        .chars()
+        .take(70)
+        .collect::<String>();
+    let doc = from_markdown(text);
+    Entry {
+        path,
+        title,
+        modified,
+        preview,
+        starred: meta.starred,
+        pages: export::page_count(&doc),
+        scenes: doc.scene_count(),
+        author: meta.author.clone(),
+        ..Default::default()
+    }
 }
 
 pub fn slugify(title: &str) -> String {
@@ -580,11 +605,16 @@ pub fn find_in(text: &str, needle: &str, keep: usize) -> (Vec<Hit>, usize) {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn search_scripts(needle: &str, keep: usize) -> Vec<Found> {
+    search_entries(list_scripts(), needle, keep)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn search_entries(entries: Vec<Entry>, needle: &str, keep: usize) -> Vec<Found> {
     let mut out = Vec::new();
     if needle.trim().chars().count() < 2 {
         return out;
     }
-    for e in list_scripts() {
+    for e in entries {
         let Ok(text) = fs::read_to_string(&e.path) else {
             continue;
         };
