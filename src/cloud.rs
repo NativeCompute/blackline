@@ -147,7 +147,8 @@ impl CloudStore {
     }
 
     pub fn key_for(&self, id: &str) -> PathBuf {
-        self.root.join(format!("{id}.md"))
+        let safe: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(64).collect();
+        self.root.join(format!("{safe}.md"))
     }
 
     pub fn id_of(&self, key: &Path) -> Option<String> {
